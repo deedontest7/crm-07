@@ -1,169 +1,132 @@
-import { useState } from "react";
-import { Search, Filter, MoreHorizontal, Mail, Phone } from "lucide-react";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { Header } from "@/components/layout/Header";
+import LeadTable from "@/components/LeadTable";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { cn } from "@/lib/utils";
-
-const leads = [
-  { id: 1, name: "Sarah Johnson", email: "sarah@techcorp.com", company: "TechCorp Inc.", value: "$45,000", status: "hot", source: "Website", lastContact: "2 hours ago" },
-  { id: 2, name: "Michael Chen", email: "michael@globalsolutions.com", company: "Global Solutions", value: "$32,000", status: "warm", source: "LinkedIn", lastContact: "1 day ago" },
-  { id: 3, name: "Emily Davis", email: "emily@innovate.com", company: "Innovate Ltd.", value: "$28,500", status: "hot", source: "Referral", lastContact: "3 hours ago" },
-  { id: 4, name: "James Wilson", email: "james@enterprise.co", company: "Enterprise Co.", value: "$55,000", status: "cold", source: "Cold Email", lastContact: "5 days ago" },
-  { id: 5, name: "Lisa Anderson", email: "lisa@startuphub.io", company: "StartUp Hub", value: "$18,000", status: "warm", source: "Webinar", lastContact: "1 day ago" },
-  { id: 6, name: "David Brown", email: "david@megacorp.com", company: "MegaCorp", value: "$85,000", status: "hot", source: "Trade Show", lastContact: "4 hours ago" },
-  { id: 7, name: "Jennifer Lee", email: "jennifer@nexgen.io", company: "NexGen Tech", value: "$42,000", status: "warm", source: "Website", lastContact: "2 days ago" },
-  { id: 8, name: "Robert Taylor", email: "robert@acme.com", company: "Acme Industries", value: "$67,000", status: "cold", source: "Partner", lastContact: "1 week ago" },
-];
-
-const statusStyles = {
-  hot: "bg-destructive/10 text-destructive border-destructive/20",
-  warm: "bg-warning/10 text-warning border-warning/20",
-  cold: "bg-muted text-muted-foreground border-border",
-};
-
+import { Settings, Plus, Trash2, MoreVertical, Upload, Download } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useState, useRef } from "react";
+import { useToast } from "@/hooks/use-toast";
+import { useSimpleLeadsImportExport } from "@/hooks/useSimpleLeadsImportExport";
+import { useLeadDeletion } from "@/hooks/useLeadDeletion";
+import { LeadDeleteConfirmDialog } from "@/components/LeadDeleteConfirmDialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 const Leads = () => {
-  const [selectedLeads, setSelectedLeads] = useState<number[]>([]);
-
-  const toggleLead = (id: number) => {
-    setSelectedLeads(prev => 
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-    );
+  const {
+    toast
+  } = useToast();
+  const [showColumnCustomizer, setShowColumnCustomizer] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const {
+    handleImport,
+    handleExport,
+    isImporting
+  } = useSimpleLeadsImportExport(() => {
+    setRefreshTrigger(prev => prev + 1);
+  });
+  const {
+    deleteLeads,
+    isDeleting
+  } = useLeadDeletion();
+  const handleBulkDelete = async (deleteLinkedRecords: boolean = true) => {
+    if (selectedLeads.length === 0) return;
+    const result = await deleteLeads(selectedLeads, deleteLinkedRecords);
+    if (result.success) {
+      setSelectedLeads([]);
+      setRefreshTrigger(prev => prev + 1);
+      setShowBulkDeleteDialog(false);
+    }
   };
-
-  const toggleAll = () => {
-    setSelectedLeads(prev => 
-      prev.length === leads.length ? [] : leads.map(l => l.id)
-    );
+  const handleBulkDeleteClick = () => {
+    if (selectedLeads.length === 0) return;
+    setShowBulkDeleteDialog(true);
   };
-
-  return (
-    <div className="min-h-screen bg-background">
-      <Sidebar />
-      
-      <main className="ml-64 p-8 transition-all duration-300">
-        <Header 
-          title="Leads" 
-          subtitle="Manage and track your sales prospects"
-        />
-
-        {/* Filters Bar */}
-        <div className="flex items-center justify-between mb-6 animate-fade-in">
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input 
-                placeholder="Search leads..." 
-                className="pl-10 w-80 bg-card"
-              />
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && file.type === 'text/csv') {
+      handleImport(file);
+    } else {
+      toast({
+        title: "Error",
+        description: "Please select a valid CSV file",
+        variant: "destructive"
+      });
+    }
+    // Reset the input value so the same file can be selected again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+  return <div className="h-screen flex flex-col bg-background overflow-hidden">
+      {/* Fixed Header */}
+      <div className="flex-shrink-0 bg-background">
+        <div className="px-6 h-16 flex items-center border-b w-full">
+          <div className="flex items-center justify-between w-full">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-2xl text-foreground font-semibold">Leads</h1>
             </div>
-            <Button variant="outline" className="gap-2">
-              <Filter className="h-4 w-4" />
-              Filters
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            {selectedLeads.length > 0 && (
-              <span className="text-sm text-muted-foreground mr-2">
-                {selectedLeads.length} selected
-              </span>
-            )}
-            <Button variant="secondary">Export</Button>
-            <Button variant="accent">Import Leads</Button>
-          </div>
-        </div>
+            <div className="flex items-center gap-3">
+          
+          {selectedLeads.length > 0 && <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="icon" onClick={handleBulkDeleteClick} disabled={isDeleting}>
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{isDeleting ? 'Deleting...' : `Delete Selected (${selectedLeads.length})`}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>}
 
-        {/* Leads Table */}
-        <div className="bg-card rounded-xl border border-border shadow-card animate-slide-up">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="w-12">
-                  <Checkbox 
-                    checked={selectedLeads.length === leads.length}
-                    onCheckedChange={toggleAll}
-                  />
-                </TableHead>
-                <TableHead>Lead</TableHead>
-                <TableHead>Company</TableHead>
-                <TableHead>Value</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Last Contact</TableHead>
-                <TableHead className="w-24">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {leads.map((lead, index) => (
-                <TableRow 
-                  key={lead.id}
-                  className="cursor-pointer transition-colors"
-                  style={{ animationDelay: `${index * 50}ms` }}
-                >
-                  <TableCell>
-                    <Checkbox 
-                      checked={selectedLeads.includes(lead.id)}
-                      onCheckedChange={() => toggleLead(lead.id)}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-9 w-9 border-2 border-accent/20">
-                        <AvatarFallback className="bg-accent/10 text-accent text-sm font-medium">
-                          {lead.name.split(" ").map(n => n[0]).join("")}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="font-medium text-foreground">{lead.name}</p>
-                        <p className="text-sm text-muted-foreground">{lead.email}</p>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-foreground">{lead.company}</TableCell>
-                  <TableCell className="font-semibold text-foreground">{lead.value}</TableCell>
-                  <TableCell>
-                    <Badge 
-                      variant="outline" 
-                      className={cn("capitalize", statusStyles[lead.status as keyof typeof statusStyles])}
-                    >
-                      {lead.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{lead.source}</TableCell>
-                  <TableCell className="text-muted-foreground">{lead.lastContact}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <Mail className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <Phone className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                Actions
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={() => setShowColumnCustomizer(true)}>
+                <Settings className="w-4 h-4 mr-2" />
+                Columns
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => fileInputRef.current?.click()} disabled={isImporting}>
+                <Upload className="w-4 h-4 mr-2" />
+                {isImporting ? 'Importing...' : 'Import CSV'}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExport}>
+                <Download className="w-4 h-4 mr-2" />
+                Export CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleBulkDeleteClick} disabled={selectedLeads.length === 0 || isDeleting} className="text-destructive focus:text-destructive">
+                <Trash2 className="w-4 h-4 mr-2" />
+                {isDeleting ? 'Deleting...' : `Delete Selected (${selectedLeads.length})`}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Button variant="outline" size="sm" onClick={() => setShowModal(true)}>
+            Add Lead
+          </Button>
+            </div>
+          </div>
         </div>
-      </main>
-    </div>
-  );
+      </div>
+
+      {/* Hidden file input */}
+      <input ref={fileInputRef} type="file" accept=".csv" onChange={handleFileSelect} style={{
+      display: 'none'
+    }} />
+
+      {/* Main Content Area */}
+      <div className="flex-1 min-h-0 overflow-auto p-6">
+        <LeadTable showColumnCustomizer={showColumnCustomizer} setShowColumnCustomizer={setShowColumnCustomizer} showModal={showModal} setShowModal={setShowModal} selectedLeads={selectedLeads} setSelectedLeads={setSelectedLeads} key={refreshTrigger} />
+      </div>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <LeadDeleteConfirmDialog open={showBulkDeleteDialog} onConfirm={handleBulkDelete} onCancel={() => setShowBulkDeleteDialog(false)} isMultiple={true} count={selectedLeads.length} />
+    </div>;
 };
-
 export default Leads;
