@@ -475,6 +475,7 @@ export const ContactDetailModal = ({
       <MeetingModal
         open={showMeetingModal}
         onOpenChange={setShowMeetingModal}
+        initialContactId={contact.id}
         onSuccess={() => {
           onUpdate?.();
           setShowMeetingModal(false);

@@ -418,10 +418,41 @@ export const LeadDetailModal = ({
       <MeetingModal
         open={showMeetingModal}
         onOpenChange={setShowMeetingModal}
+        initialLeadId={lead.id}
         onSuccess={() => {
           setShowMeetingModal(false);
           onUpdate?.();
         }}
+      />
+
+      <TaskModal
+        open={showTaskModal}
+        onOpenChange={setShowTaskModal}
+        onSubmit={async (data) => {
+          // Import and use createTask from useTasks if needed
+          const { supabase } = await import('@/integrations/supabase/client');
+          const { data: userData } = await supabase.auth.getUser();
+          if (!userData?.user?.id) return null;
+          
+          const { data: taskData, error } = await supabase
+            .from('tasks')
+            .insert({
+              ...data,
+              lead_id: lead.id,
+              module_type: 'leads',
+              created_by: userData.user.id,
+            })
+            .select()
+            .single();
+
+          if (!error && taskData) {
+            setShowTaskModal(false);
+            onUpdate?.();
+            return taskData;
+          }
+          return null;
+        }}
+        context={{ module: 'leads', recordId: lead.id, recordName: lead.lead_name }}
       />
     </>
   );

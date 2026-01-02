@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EntityEmailHistory } from "@/components/shared/EntityEmailHistory";
 import { SendEmailModal } from "@/components/SendEmailModal";
+import { RelatedTasksSection } from "@/components/shared/RelatedTasksSection";
 import { 
   Building2, 
   Globe, 
@@ -25,7 +26,8 @@ import {
   History,
   Pencil,
   CalendarPlus,
-  CheckSquare
+  CheckSquare,
+  ListTodo
 } from "lucide-react";
 import { format } from "date-fns";
 import { AccountActivityTimeline } from "./AccountActivityTimeline";
@@ -124,8 +126,12 @@ export const AccountDetailModal = ({ open, onOpenChange, account, onUpdate, onEd
           </DialogHeader>
 
           <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="tasks" className="flex items-center gap-1">
+                <ListTodo className="h-3 w-3" />
+                Tasks
+              </TabsTrigger>
               <TabsTrigger value="timeline">Activity</TabsTrigger>
               <TabsTrigger value="emails">Emails</TabsTrigger>
               <TabsTrigger value="associations">Related</TabsTrigger>
@@ -221,6 +227,14 @@ export const AccountDetailModal = ({ open, onOpenChange, account, onUpdate, onEd
                   </span>
                 )}
               </div>
+            </TabsContent>
+
+            <TabsContent value="tasks" className="mt-4">
+              <RelatedTasksSection 
+                moduleType="accounts"
+                recordId={account.id}
+                recordName={account.company_name}
+              />
             </TabsContent>
 
             <TabsContent value="timeline" className="mt-4">
