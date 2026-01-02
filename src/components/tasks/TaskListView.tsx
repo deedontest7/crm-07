@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { Task, TaskStatus, TaskModuleType } from '@/types/task';
 import { Card } from '@/components/ui/card';
@@ -36,6 +37,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ListTodo,
+  ExternalLink,
 } from 'lucide-react';
 import { useUserDisplayNames } from '@/hooks/useUserDisplayNames';
 import { DeleteConfirmDialog } from '@/components/shared/DeleteConfirmDialog';
@@ -43,6 +45,7 @@ import { TaskDetailModal } from './TaskDetailModal';
 import { RowActionsDropdown } from '@/components/RowActionsDropdown';
 import { HighlightedText } from '@/components/shared/HighlightedText';
 import { ClearFiltersButton } from '@/components/shared/ClearFiltersButton';
+import { getTaskStatusColor, getTaskPriorityColor, getModuleTypeColor, getTaskStatusLabel } from '@/utils/statusBadgeUtils';
 
 interface TaskListViewProps {
   tasks: Task[];
@@ -58,25 +61,20 @@ interface TaskListViewProps {
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
-const priorityColors = {
-  high: 'bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-300 border-rose-200 dark:border-rose-800',
-  medium: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300 border-amber-200 dark:border-amber-800',
-  low: 'bg-slate-100 text-slate-600 dark:bg-slate-800/30 dark:text-slate-400 border-slate-200 dark:border-slate-700',
-};
-
-const statusColors = {
-  open: 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 border-blue-200 dark:border-blue-800',
-  in_progress: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800',
-  completed: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800',
-  cancelled: 'bg-gray-100 text-gray-600 dark:bg-gray-800/30 dark:text-gray-400 border-gray-200 dark:border-gray-700',
-};
-
 const moduleIcons: Record<TaskModuleType, React.ElementType> = {
   accounts: Building2,
   contacts: User,
   leads: Users,
   meetings: Calendar,
   deals: Briefcase,
+};
+
+const moduleRoutes: Record<TaskModuleType, string> = {
+  accounts: '/accounts',
+  contacts: '/contacts',
+  leads: '/leads',
+  meetings: '/meetings',
+  deals: '/deals',
 };
 
 export const TaskListView = ({
@@ -90,6 +88,7 @@ export const TaskListView = ({
   selectedTasks: externalSelectedTasks,
   onSelectionChange,
 }: TaskListViewProps) => {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
@@ -377,12 +376,12 @@ export const TaskListView = ({
                         </button>
                       </TableCell>
                       <TableCell className="px-4 py-3">
-                        <Badge variant="outline" className={`whitespace-nowrap ${statusColors[task.status]}`}>
-                          {task.status.replace('_', ' ')}
+                        <Badge variant="outline" className={`whitespace-nowrap ${getTaskStatusColor(task.status)}`}>
+                          {getTaskStatusLabel(task.status)}
                         </Badge>
                       </TableCell>
                       <TableCell className="px-4 py-3">
-                        <Badge variant="outline" className={`whitespace-nowrap ${priorityColors[task.priority]}`}>
+                        <Badge variant="outline" className={`whitespace-nowrap capitalize ${getTaskPriorityColor(task.priority)}`}>
                           {task.priority}
                         </Badge>
                       </TableCell>
@@ -405,13 +404,24 @@ export const TaskListView = ({
                         </span>
                       </TableCell>
                       <TableCell className="px-4 py-3">
-                        {linkedEntity ? (
-                          <div className="flex items-center gap-1 text-sm">
-                            <linkedEntity.icon className="h-3 w-3" />
-                            <span className="truncate max-w-[100px]" title={linkedEntity.name}>
-                              {linkedEntity.name}
-                            </span>
-                          </div>
+                        {linkedEntity && task.module_type ? (
+                          <button
+                            onClick={() => {
+                              const recordId = task.account_id || task.contact_id || task.lead_id || task.meeting_id || task.deal_id;
+                              if (recordId && task.module_type) {
+                                navigate(`${moduleRoutes[task.module_type]}?viewId=${recordId}`);
+                              }
+                            }}
+                            className="flex items-center gap-1.5 text-sm text-primary hover:underline group"
+                          >
+                            <Badge variant="outline" className={`${getModuleTypeColor(task.module_type)} capitalize gap-1`}>
+                              <linkedEntity.icon className="h-3 w-3" />
+                              <span className="truncate max-w-[80px]" title={linkedEntity.name}>
+                                {linkedEntity.name}
+                              </span>
+                            </Badge>
+                            <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </button>
                         ) : (
                           <span className="text-center text-muted-foreground w-full block">-</span>
                         )}
