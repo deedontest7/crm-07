@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { X, Plus, Clock, History, ListTodo, ChevronDown, ChevronRight, Eye, Pencil, ArrowRight, RefreshCw, Check, ArrowUpDown, MessageSquarePlus, Phone, Mail, Calendar, FileText, User, MoreHorizontal, Trash2, CheckCircle, Handshake } from "lucide-react";
+import { X, Plus, Clock, History, ListTodo, ChevronDown, ChevronRight, Eye, Pencil, ArrowRight, RefreshCw, Check, ArrowUpDown, ArrowUp, ArrowDown, MessageSquarePlus, Phone, Mail, Calendar, FileText, User, MoreHorizontal, Trash2, CheckCircle, Handshake } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -146,7 +146,8 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
    const [historyOpen, setHistoryOpen] = useState(true);
    const [actionsOpen, setActionsOpen] = useState(true);
     const [detailLogId, setDetailLogId] = useState<string | null>(null);
-    const [actionSortBy, setActionSortBy] = useState<'due_date' | 'priority'>('due_date');
+    const [actionItemSortField, setActionItemSortField] = useState<string>('due_date');
+    const [actionItemSortDirection, setActionItemSortDirection] = useState<'asc' | 'desc'>('asc');
     const queryClient = useQueryClient();
     
     // Add Log dialog state
@@ -160,8 +161,8 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
     const [editingDateId, setEditingDateId] = useState<string | null>(null);
 
     // History section state
-    const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [historyTypeFilter, setHistoryTypeFilter] = useState<string>('All');
+    const [historySortField, setHistorySortField] = useState<string>('created_at');
     const [historySortDirection, setHistorySortDirection] = useState<'desc' | 'asc'>('desc');
 
     const { users, getUserDisplayName } = useAllUsers();
@@ -263,52 +264,40 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
      }
    };
 
-    // History delete handlers
-    const handleDeleteLog = async (id: string) => {
-      await supabase.from('security_audit_log').delete().eq('id', id);
-      queryClient.invalidateQueries({ queryKey: ['deal-audit-logs', deal.id] });
-      setSelectedLogIds(prev => prev.filter(i => i !== id));
-    };
 
-    const handleBulkDeleteLogs = async () => {
-      for (const id of selectedLogIds) {
-        await supabase.from('security_audit_log').delete().eq('id', id);
-      }
-      queryClient.invalidateQueries({ queryKey: ['deal-audit-logs', deal.id] });
-      setSelectedLogIds([]);
-    };
-
-    // History filtering and sorting
-    const filteredSortedLogs = useMemo(() => {
-      let logs = [...auditLogs];
-      if (historyTypeFilter !== 'All') {
-        logs = logs.filter(log => {
-          const action = log.action.toUpperCase();
-          if (historyTypeFilter === 'System') return !['NOTE', 'CALL', 'MEETING', 'EMAIL'].includes(action);
-          return action === historyTypeFilter.toUpperCase();
-        });
-      }
-      logs.sort((a, b) => {
-        const diff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-        return historySortDirection === 'asc' ? diff : -diff;
-      });
-      return logs;
-    }, [auditLogs, historyTypeFilter, historySortDirection]);
-
-    const toggleAllLogs = () => {
-      if (selectedLogIds.length === filteredSortedLogs.length) {
-        setSelectedLogIds([]);
-      } else {
-        setSelectedLogIds(filteredSortedLogs.map(l => l.id));
-      }
-    };
-
-    const toggleLogItem = (id: string) => {
-      setSelectedLogIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
-    };
-
-    const allLogsSelected = filteredSortedLogs.length > 0 && selectedLogIds.length === filteredSortedLogs.length;
-    const someLogsSelected = selectedLogIds.length > 0 && selectedLogIds.length < filteredSortedLogs.length;
+     // History filtering and sorting
+     const filteredSortedLogs = useMemo(() => {
+       let logs = [...auditLogs];
+       if (historyTypeFilter !== 'All') {
+         logs = logs.filter(log => {
+           const action = log.action.toUpperCase();
+           if (historyTypeFilter === 'System') return !['NOTE', 'CALL', 'MEETING', 'EMAIL'].includes(action);
+           return action === historyTypeFilter.toUpperCase();
+         });
+       }
+       logs.sort((a, b) => {
+         let aVal: any, bVal: any;
+         if (historySortField === 'created_at') {
+           aVal = new Date(a.created_at).getTime();
+           bVal = new Date(b.created_at).getTime();
+         } else if (historySortField === 'action') {
+           aVal = a.action.toLowerCase();
+           bVal = b.action.toLowerCase();
+         } else if (historySortField === 'user_id') {
+           aVal = (a.user_id ? (displayNames[a.user_id] || '') : '').toLowerCase();
+           bVal = (b.user_id ? (displayNames[b.user_id] || '') : '').toLowerCase();
+         } else if (historySortField === 'changes') {
+           aVal = ((a.details as any)?.message || parseChangeSummary(a.action, a.details)).toLowerCase();
+           bVal = ((b.details as any)?.message || parseChangeSummary(b.action, b.details)).toLowerCase();
+         } else {
+           aVal = new Date(a.created_at).getTime();
+           bVal = new Date(b.created_at).getTime();
+         }
+         const comparison = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+         return historySortDirection === 'asc' ? comparison : -comparison;
+       });
+       return logs;
+     }, [auditLogs, historyTypeFilter, historySortField, historySortDirection, displayNames]);
 
     const typeDotColor: Record<string, string> = {
       'NOTE': 'bg-yellow-500',
@@ -323,26 +312,71 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
       return typeDotColor[action.toUpperCase()] || typeDotColor[action.toLowerCase()] || 'bg-muted-foreground';
     };
 
-    // Toggle sort for action items
-    const toggleActionSort = () => {
-      setActionSortBy(prev => prev === 'due_date' ? 'priority' : 'due_date');
-    };
-
-   // Sort action items
-   const sortedActionItems = useMemo(() => {
-     return [...actionItems].sort((a, b) => {
-       if (actionSortBy === 'due_date') {
-         if (!a.due_date && !b.due_date) return 0;
-         if (!a.due_date) return 1;
-         if (!b.due_date) return -1;
-         return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+     // Sort helpers
+     const handleHistorySort = (field: string) => {
+       if (historySortField === field) {
+         setHistorySortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
        } else {
-         const priorityOrder = { 'High': 0, 'Medium': 1, 'Low': 2 };
-         return (priorityOrder[a.priority as keyof typeof priorityOrder] || 2) - 
-                (priorityOrder[b.priority as keyof typeof priorityOrder] || 2);
+         setHistorySortField(field);
+         setHistorySortDirection('asc');
        }
-     });
-   }, [actionItems, actionSortBy]);
+     };
+
+     const getHistorySortIcon = (field: string) => {
+       if (historySortField !== field) return <ArrowUpDown className="w-3 h-3 text-muted-foreground/60" />;
+       return historySortDirection === 'asc' 
+         ? <ArrowUp className="w-3 h-3 text-foreground" /> 
+         : <ArrowDown className="w-3 h-3 text-foreground" />;
+     };
+
+     const handleActionItemSort = (field: string) => {
+       if (actionItemSortField === field) {
+         setActionItemSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+       } else {
+         setActionItemSortField(field);
+         setActionItemSortDirection('asc');
+       }
+     };
+
+     const getActionItemSortIcon = (field: string) => {
+       if (actionItemSortField !== field) return <ArrowUpDown className="w-3 h-3 text-muted-foreground/60" />;
+       return actionItemSortDirection === 'asc' 
+         ? <ArrowUp className="w-3 h-3 text-foreground" /> 
+         : <ArrowDown className="w-3 h-3 text-foreground" />;
+     };
+
+    // Sort action items
+    const sortedActionItems = useMemo(() => {
+      const priorityOrder: Record<string, number> = { 'High': 0, 'Medium': 1, 'Low': 2 };
+      const statusOrder: Record<string, number> = { 'Open': 0, 'In Progress': 1, 'Completed': 2, 'Cancelled': 3 };
+      return [...actionItems].sort((a, b) => {
+        let aVal: any, bVal: any;
+        if (actionItemSortField === 'due_date') {
+          if (!a.due_date && !b.due_date) return 0;
+          if (!a.due_date) return 1;
+          if (!b.due_date) return -1;
+          aVal = new Date(a.due_date).getTime();
+          bVal = new Date(b.due_date).getTime();
+        } else if (actionItemSortField === 'priority') {
+          aVal = priorityOrder[a.priority] ?? 2;
+          bVal = priorityOrder[b.priority] ?? 2;
+        } else if (actionItemSortField === 'status') {
+          aVal = statusOrder[a.status] ?? 99;
+          bVal = statusOrder[b.status] ?? 99;
+        } else if (actionItemSortField === 'title') {
+          aVal = a.title.toLowerCase();
+          bVal = b.title.toLowerCase();
+        } else if (actionItemSortField === 'assigned_to') {
+          aVal = (a.assigned_to ? (getUserDisplayName(a.assigned_to) || '') : '').toLowerCase();
+          bVal = (b.assigned_to ? (getUserDisplayName(b.assigned_to) || '') : '').toLowerCase();
+        } else {
+          aVal = a[actionItemSortField as keyof ActionItem] || '';
+          bVal = b[actionItemSortField as keyof ActionItem] || '';
+        }
+        const comparison = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+        return actionItemSortDirection === 'asc' ? comparison : -comparison;
+      });
+    }, [actionItems, actionItemSortField, actionItemSortDirection, getUserDisplayName]);
  
    const handleAddActionClick = (e: React.MouseEvent) => {
      e.stopPropagation();
@@ -471,19 +505,6 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
                       </SelectContent>
                     </Select>
                   </div>
-                  {/* Sort toggle */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setHistorySortDirection(prev => prev === 'desc' ? 'asc' : 'desc');
-                    }}
-                    title={`Sort ${historySortDirection === 'desc' ? 'oldest first' : 'newest first'}`}
-                  >
-                    <ArrowUpDown className="h-3 w-3 text-muted-foreground" />
-                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -511,15 +532,6 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
               </CollapsibleTrigger>
              <CollapsibleContent className="flex-1 min-h-0 collapsible-content data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
                 <div className="h-[280px] overflow-y-auto">
-                     {/* Bulk actions bar */}
-                     {selectedLogIds.length > 0 && (
-                       <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/40 border-b border-border/20">
-                         <span className="text-[10px] text-muted-foreground">{selectedLogIds.length} selected</span>
-                         <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px] text-destructive hover:text-destructive gap-1" onClick={handleBulkDeleteLogs}>
-                           <Trash2 className="h-3 w-3" /> Delete Selected
-                         </Button>
-                       </div>
-                     )}
                      {isLoading ? (
                        <div className="flex items-center justify-center py-6">
                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
@@ -533,28 +545,32 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
                        <Table>
                          <TableHeader>
                            <TableRow className="text-[11px] bg-muted/50">
-                             <TableHead className="h-7 px-1 w-7">
-                               <div className="flex items-center justify-center">
-                                 <Checkbox checked={allLogsSelected} onCheckedChange={toggleAllLogs} className={someLogsSelected ? 'data-[state=checked]:bg-primary' : ''} />
-                               </div>
+                             <TableHead className="h-7 px-2 text-[11px] font-bold">
+                               <button className="flex items-center gap-1" onClick={() => handleHistorySort('changes')}>
+                                 Changes {getHistorySortIcon('changes')}
+                               </button>
                              </TableHead>
-                             <TableHead className="h-7 px-2 text-[11px] font-bold">Changes</TableHead>
-                             <TableHead className="h-7 px-2 text-[11px] font-bold w-20">By</TableHead>
-                             <TableHead className="h-7 px-2 text-[11px] font-bold w-24">Time</TableHead>
-                             <TableHead className="h-7 px-1 text-[11px] font-bold text-center" style={{ width: '6.67%', maxWidth: '6.67%' }}>Type</TableHead>
+                             <TableHead className="h-7 px-2 text-[11px] font-bold w-24">
+                               <button className="flex items-center gap-1" onClick={() => handleHistorySort('user_id')}>
+                                 By {getHistorySortIcon('user_id')}
+                               </button>
+                             </TableHead>
+                             <TableHead className="h-7 px-2 text-[11px] font-bold w-16">
+                               <button className="flex items-center gap-1" onClick={() => handleHistorySort('action')}>
+                                 Type {getHistorySortIcon('action')}
+                               </button>
+                             </TableHead>
+                             <TableHead className="h-7 px-2 text-[11px] font-bold w-24">
+                               <button className="flex items-center gap-1" onClick={() => handleHistorySort('created_at')}>
+                                 Time {getHistorySortIcon('created_at')}
+                               </button>
+                             </TableHead>
                              <TableHead className="h-7 px-1 w-8"></TableHead>
                            </TableRow>
                          </TableHeader>
                          <TableBody>
                            {filteredSortedLogs.map((log) => (
-                             <TableRow key={log.id} className={cn("text-xs group cursor-pointer hover:bg-muted/30", selectedLogIds.includes(log.id) && 'bg-primary/5')}>
-                               {/* Checkbox */}
-                               <TableCell onClick={e => e.stopPropagation()} className="py-1.5 px-1 w-7">
-                                 <div className="flex items-center justify-center">
-                                   <Checkbox checked={selectedLogIds.includes(log.id)} onCheckedChange={() => toggleLogItem(log.id)} />
-                                 </div>
-                               </TableCell>
-
+                             <TableRow key={log.id} className="text-xs group cursor-pointer hover:bg-muted/30">
                                {/* Changes - clickable blue text */}
                                <TableCell className="py-1.5 px-2">
                                  <button 
@@ -565,9 +581,14 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
                                  </button>
                                </TableCell>
 
-                               {/* By */}
-                               <TableCell className="py-1.5 px-2 text-muted-foreground max-w-[80px] truncate text-[10px]">
+                               {/* By - fully visible */}
+                               <TableCell className="py-1.5 px-2 text-muted-foreground whitespace-nowrap text-[10px]">
                                  {log.user_id ? (displayNames[log.user_id] || '...') : '-'}
+                               </TableCell>
+
+                               {/* Type - text label */}
+                               <TableCell className="py-1.5 px-2">
+                                 <span className="capitalize text-[10px] text-muted-foreground">{log.action.toLowerCase()}</span>
                                </TableCell>
 
                                {/* Time */}
@@ -575,40 +596,11 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
                                  {formatHistoryDateTime(new Date(log.created_at))}
                                </TableCell>
 
-                               {/* Type - colored dot with tooltip */}
-                               <TableCell className="py-1.5 px-1 text-center" style={{ width: '6.67%', maxWidth: '6.67%' }}>
-                                 <TooltipProvider>
-                                   <Tooltip>
-                                     <TooltipTrigger asChild>
-                                       <div className="flex items-center justify-center">
-                                         <div className={cn("h-2.5 w-2.5 rounded-full", getTypeDotColor(log.action))} />
-                                       </div>
-                                     </TooltipTrigger>
-                                     <TooltipContent side="top" className="text-xs">
-                                       <span className="capitalize">{log.action.toLowerCase()}</span>
-                                     </TooltipContent>
-                                   </Tooltip>
-                                 </TooltipProvider>
-                               </TableCell>
-
-                               {/* Actions dropdown */}
+                               {/* Eye icon only */}
                                <TableCell onClick={e => e.stopPropagation()} className="py-1.5 px-1 w-8">
-                                 <DropdownMenu>
-                                   <DropdownMenuTrigger asChild>
-                                     <Button variant="ghost" size="sm" className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                       <MoreHorizontal className="h-3 w-3" />
-                                     </Button>
-                                   </DropdownMenuTrigger>
-                                   <DropdownMenuContent align="end" className="w-36">
-                                     <DropdownMenuItem onClick={() => setDetailLogId(log.id)}>
-                                       <Eye className="h-3 w-3 mr-2" /> View Details
-                                     </DropdownMenuItem>
-                                     <DropdownMenuSeparator />
-                                     <DropdownMenuItem onClick={() => handleDeleteLog(log.id)} className="text-destructive focus:text-destructive">
-                                       <Trash2 className="h-3 w-3 mr-2" /> Delete
-                                     </DropdownMenuItem>
-                                   </DropdownMenuContent>
-                                 </DropdownMenu>
+                                 <Button variant="ghost" size="sm" className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setDetailLogId(log.id)}>
+                                   <Eye className="h-3 w-3" />
+                                 </Button>
                                </TableCell>
                              </TableRow>
                            ))}
@@ -631,18 +623,6 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
                  <ListTodo className="h-3.5 w-3.5 text-muted-foreground" />
                  <span className="text-xs font-medium text-foreground">Action Items</span>
                  <span className="text-xs text-muted-foreground ml-1">({actionItems.length})</span>
-                 <Button
-                   variant="ghost"
-                   size="sm"
-                   className="ml-auto h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                   onClick={(e) => {
-                     e.stopPropagation();
-                     toggleActionSort();
-                   }}
-                   title={`Sort by ${actionSortBy === 'due_date' ? 'priority' : 'due date'}`}
-                 >
-                   <ArrowUpDown className="h-3 w-3 text-muted-foreground" />
-                 </Button>
                  <span
                    role="button"
                    tabIndex={0}
@@ -688,13 +668,33 @@ const parseChangeSummary = (action: string, details: Record<string, unknown> | n
                                 <Checkbox checked={allActionsSelected} onCheckedChange={toggleAllActions} className={someActionsSelected ? 'data-[state=checked]:bg-primary' : ''} />
                               </div>
                             </TableHead>
-                            <TableHead className="h-7 px-2 text-[11px] font-bold">Task</TableHead>
-                            <TableHead className="h-7 px-2 text-[11px] font-bold w-20">Assigned To</TableHead>
-                            <TableHead className="h-7 px-2 text-[11px] font-bold w-16">Due Date</TableHead>
-                            <TableHead className="h-7 px-1 text-[11px] font-bold text-center" style={{ width: '6.67%', maxWidth: '6.67%' }}>Status</TableHead>
-                            <TableHead className="h-7 px-1 text-[11px] font-bold text-center" style={{ width: '6.67%', maxWidth: '6.67%' }}>Priority</TableHead>
-                            <TableHead className="h-7 px-1 text-[11px] font-bold text-center" style={{ width: '6.67%', maxWidth: '6.67%' }}>Module</TableHead>
-                            <TableHead className="h-7 px-1 w-8"></TableHead>
+                            <TableHead className="h-7 px-2 text-[11px] font-bold">
+                               <button className="flex items-center gap-1" onClick={() => handleActionItemSort('title')}>
+                                 Task {getActionItemSortIcon('title')}
+                               </button>
+                             </TableHead>
+                             <TableHead className="h-7 px-2 text-[11px] font-bold w-20">
+                               <button className="flex items-center gap-1" onClick={() => handleActionItemSort('assigned_to')}>
+                                 Assigned To {getActionItemSortIcon('assigned_to')}
+                               </button>
+                             </TableHead>
+                             <TableHead className="h-7 px-2 text-[11px] font-bold w-16">
+                               <button className="flex items-center gap-1" onClick={() => handleActionItemSort('due_date')}>
+                                 Due Date {getActionItemSortIcon('due_date')}
+                               </button>
+                             </TableHead>
+                             <TableHead className="h-7 px-1 text-[11px] font-bold text-center" style={{ width: '6.67%', maxWidth: '6.67%' }}>
+                               <button className="flex items-center gap-1 mx-auto" onClick={() => handleActionItemSort('status')}>
+                                 Status {getActionItemSortIcon('status')}
+                               </button>
+                             </TableHead>
+                             <TableHead className="h-7 px-1 text-[11px] font-bold text-center" style={{ width: '6.67%', maxWidth: '6.67%' }}>
+                               <button className="flex items-center gap-1 mx-auto" onClick={() => handleActionItemSort('priority')}>
+                                 Priority {getActionItemSortIcon('priority')}
+                               </button>
+                             </TableHead>
+                             <TableHead className="h-7 px-1 text-[11px] font-bold text-center" style={{ width: '6.67%', maxWidth: '6.67%' }}>Module</TableHead>
+                             <TableHead className="h-7 px-1 w-8"></TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
