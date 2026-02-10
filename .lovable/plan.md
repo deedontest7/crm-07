@@ -1,74 +1,84 @@
 
 
-## Upgrade History Section to Match Action Items Layout
+## Changes to DealExpandedPanel.tsx - History & Action Items Tables
 
-### Overview
-Enhance the History section in the Deal Expanded Panel to be feature-rich and visually consistent with the Action Items section. Following CRM industry standards (Salesforce Activity Timeline, HubSpot Activity Feed), the History table will get interactive columns, filtering, inline actions, and consistent styling.
+### 1. History Table Updates
 
-### Current State
-The History section is a simple read-only table with columns: Time | Type | By | Changes | View button. No filtering, no inline editing, no selection, no type filtering.
+**a. Column reorder: Move "Type" before "Time"**
+- Current: Checkbox | Changes | By | Time | Type | Actions
+- New: No | Changes | By | Type | Time | Actions
 
-### Proposed Changes
+**b. Type column: Show text label instead of color dot**
+- Replace the colored dot + Tooltip with a plain text `<span>` showing the action type (e.g., "Note", "Call", "Update")
+- Use `capitalize` on the text, styled as `text-[10px] text-muted-foreground`
 
-**File: `src/components/DealExpandedPanel.tsx`**
+**c. "By" column: Make username fully visible**
+- Remove `max-w-[80px] truncate` from the By cell
+- Use `whitespace-nowrap` so names don't wrap
 
-#### 1. Add New State Variables
-- `selectedLogIds: string[]` -- checkbox selection for bulk actions
-- `historyTypeFilter: string` -- filter by log type (All, Note, Call, Meeting, Email, Update)
-- `historySortDirection: 'asc' | 'desc'` -- toggle sort order for history
+**d. Remove Delete action, replace dropdown with eye icon only**
+- Remove the entire `DropdownMenu` in the actions column
+- Replace with a simple `Button` (ghost, icon-only) with `Eye` icon that calls `setDetailLogId(log.id)`
+- Also remove the bulk delete bar (selectedLogIds bulk actions), checkbox column, and `handleDeleteLog`/`handleBulkDeleteLogs` references since we're recording history and shouldn't allow deletion
 
-#### 2. Add History Filter & Sort Logic
-- Filter audit logs by `historyTypeFilter` before rendering
-- Sort by `created_at` based on `historySortDirection`
-- Add a type filter dropdown in the History collapsible header (next to Add Log button)
+### 2. Add Type Filter Dropdown to History Section
 
-#### 3. Upgrade History Table Header
-Replace current simple headers with the Action Items style:
-- **Checkbox column** (w-7) -- select all / individual, matching Action Items pattern
-- **Type column** (6.67% width) -- colored dot with tooltip (like Status/Priority dots), matching the 20% rule
-- **Changes column** (flex) -- clickable text in blue (`text-[#2e538e]`), opens detail dialog on click
-- **By column** (w-20) -- user display name, truncated
-- **Time column** (w-24) -- formatted date/time
-- **Actions column** (w-8) -- `...` dropdown with View Details, Delete options (on hover)
+The type filter dropdown already exists in the header (lines 458-472) with options: All, Note, Call, Meeting, Email, System. This matches the uploaded image exactly -- no changes needed here.
 
-#### 4. Upgrade History Table Rows
-- Add checkbox per row
-- Type column: colored dot only (Note=yellow, Call=blue, Meeting=purple, Email=green, System=gray) with tooltip showing label -- exactly like Status/Priority dots in Action Items
-- Changes column: clickable blue text, opens the detail dialog
-- Actions column: `...` dropdown (MoreHorizontal) appearing on hover with:
-  - "View Details" -- opens the existing detail dialog
-  - "Delete" -- deletes the log entry (with confirmation)
-- Row hover highlight matching Action Items (`hover:bg-muted/30`)
-- Selected row highlight (`bg-primary/5`)
+### 3. Add Sortable Column Headers to History Table
 
-#### 5. Add Bulk Actions for History
-- When logs are selected, show count and "Delete Selected" option
-- Uses same pattern as Action Items bulk selection
+- Make "Changes", "By", "Type", and "Time" column headers clickable for sorting
+- Add state: `historySortField` (string, default `'created_at'`) and `historySortDirection` (`'asc' | 'desc'`, default `'desc'`)
+- Show sort direction icons (ArrowUpDown / ArrowUp / ArrowDown) similar to ActionItemsTable
+- Sorting logic:
+  - **Changes**: Sort alphabetically by the change summary text
+  - **By**: Sort alphabetically by display name
+  - **Type**: Sort alphabetically by action type
+  - **Time**: Sort by `created_at` timestamp (already exists, just wire to header click)
+- Remove the standalone sort toggle button from the History section header (lines 474-486) since sorting moves to column headers
 
-#### 6. Add Delete Log Handler
-- `handleDeleteLog(id)` -- deletes from `security_audit_log` table and invalidates query
-- `handleBulkDeleteLogs()` -- bulk delete selected logs
+### 4. Add Sortable Column Headers to Action Items Table
 
-#### 7. History Header Enhancements
-Add to the collapsible header bar (alongside existing Add Log and Refresh buttons):
-- Type filter dropdown (small inline select): All | Note | Call | Meeting | Email | System
-- Sort toggle button (ascending/descending by time)
-
-### Column Layout Mapping (History vs Action Items)
-
-```text
-Action Items:  [Checkbox] [Task]       [Assigned To] [Due Date] [Status 6.67%] [Priority 6.67%] [Module 6.67%] [Actions]
-History:       [Checkbox] [Changes]    [By]          [Time]     [Type 6.67%]                                    [Actions]
-```
-
-The Type column uses the same 6.67% width with dot+tooltip pattern. The remaining columns distribute naturally.
+- Add state: `actionItemSortField` (string, default `'due_date'`) and `actionItemSortDirection` (`'asc' | 'desc'`, default `'asc'`)
+- Make "Task", "Assigned To", "Due Date", "Status", "Priority" headers clickable
+- Show sort direction icons matching ActionItemsTable module pattern
+- Update `sortedActionItems` to use the new field/direction state
+- Remove the standalone sort toggle button from the Action Items section header (lines 634-645)
 
 ### Technical Details
 
-- Type dots reuse the same `TooltipProvider > Tooltip > TooltipTrigger > Select` pattern from Action Items
-- Type dot colors: `{ Note: 'bg-yellow-500', Call: 'bg-blue-500', Meeting: 'bg-purple-500', Email: 'bg-green-500', update: 'bg-gray-400', create: 'bg-emerald-500' }`
-- Delete handler: `supabase.from('security_audit_log').delete().eq('id', id)` with query invalidation
-- Filtering is done client-side on the already-fetched `auditLogs` array
-- All text sizes remain `text-[10px]` / `text-[11px]` / `text-xs` to fit the panel
-- The styled table matches the Action Items section exactly in padding, row height, and hover behavior
+**File:** `src/components/DealExpandedPanel.tsx`
+
+**State changes:**
+- Replace `historySortDirection` with `historySortField` + `historySortDirection` (field-based sorting)
+- Replace `actionSortBy` with `actionItemSortField` + `actionItemSortDirection`
+- Remove `selectedLogIds` state (no more history selection/deletion)
+
+**History header (lines 534-546) -- new order:**
+```
+Checkbox removed | Changes (sortable) | By (sortable) | Type (sortable, text) | Time (sortable) | Eye icon column
+```
+
+**Action Items header (lines 684-698) -- add sort icons:**
+```
+Checkbox | Task (sortable) | Assigned To (sortable) | Due Date (sortable) | Status (sortable) | Priority (sortable) | Module | Actions
+```
+
+**Removals:**
+- `handleDeleteLog` function (line 267-271)
+- `handleBulkDeleteLogs` function (line 273-279)
+- `selectedLogIds` state and related toggle functions (lines 163, 298-311)
+- Bulk delete bar in history (lines 515-522)
+- History row checkbox cells
+- History actions dropdown (lines 594-612), replaced with simple eye icon button
+
+**Sort icon helper** (reuse pattern from ActionItemsTable):
+```typescript
+const getHistorySortIcon = (field: string) => {
+  if (historySortField !== field) return <ArrowUpDown className="w-3 h-3 text-muted-foreground/60" />;
+  return historySortDirection === 'asc' 
+    ? <ArrowUp className="w-3 h-3 text-foreground" /> 
+    : <ArrowDown className="w-3 h-3 text-foreground" />;
+};
+```
 
