@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { X, Plus, Clock, History, ListTodo, ChevronDown, ChevronRight, Eye, ArrowRight, Check, MessageSquarePlus, Phone, Mail, Calendar, FileText, User, MoreHorizontal, Trash2, Handshake } from "lucide-react";
+import { X, Plus, Clock, History, ListTodo, ChevronDown, ChevronRight, Eye, ArrowRight, Check, MessageSquarePlus, Phone, Mail, Calendar, FileText, User, MoreHorizontal, Handshake } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -732,7 +732,7 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                             }
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem onClick={() => handleDeleteActionItem(item.id)} className="text-destructive focus:text-destructive">
-                                  <Trash2 className="h-3.5 w-3.5 mr-2" />Delete
+                                  Delete
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
