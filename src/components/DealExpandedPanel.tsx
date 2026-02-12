@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { X, Plus, Clock, History, ListTodo, ChevronDown, ChevronRight, Eye, ArrowRight, Check, MessageSquarePlus, Phone, Mail, Calendar, FileText, User, MoreHorizontal, Trash2, CheckCircle, Handshake } from "lucide-react";
+import { X, Plus, Clock, History, ListTodo, ChevronDown, ChevronRight, Eye, ArrowRight, Check, MessageSquarePlus, Phone, Mail, Calendar, FileText, User, MoreHorizontal, Trash2, Handshake } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -727,7 +727,7 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                                 </DropdownMenuItem>
                                 {item.status !== 'Completed' &&
                             <DropdownMenuItem onClick={() => handleStatusChange(item.id, 'Completed')}>
-                                    <CheckCircle className="h-3.5 w-3.5 mr-2" />Mark Complete
+                                    Mark Complete
                                   </DropdownMenuItem>
                             }
                                 <DropdownMenuSeparator />
