@@ -1,67 +1,98 @@
 
 
-## Fix Inline Editing Bugs and Enhance Consistency in Deals List View
+## Bug Fixes for Deals List View -- InlineEditCell and ListView
 
-### Issues Identified
+After a thorough audit of `InlineEditCell.tsx` and `ListView.tsx`, here are all the bugs found and the plan to fix them.
 
-1. **Multiple cells editable simultaneously** -- Each `InlineEditCell` manages its own `isEditing` state independently, so clicking multiple cells opens multiple editors at once, cluttering the row (visible in the screenshot with multiple save/cancel buttons across a single row).
+---
 
-2. **Select-based fields require manual save** -- Stage, Priority, and Select types open a dropdown, but the user still has to click the tiny checkmark to confirm. Industry standard: auto-save on selection for dropdowns.
+### Bug 1: Input field not visible in narrow columns (CRITICAL -- user-reported)
 
-3. **Save/Cancel buttons overflow column width** -- The input field + two icon buttons (check + X) squeeze into fixed-width cells, causing content to overflow or wrap awkwardly, especially in narrow columns.
+**Root cause:** When a cell enters edit mode for non-auto-save types (text, number, currency, textarea), the container renders the Input plus two 24px-wide save/cancel buttons side by side in a flex row. With cells constrained to `maxWidth` (e.g., 100px for Priority, 120px for Value), the `flex-1 min-w-0` input wrapper shrinks to near-zero width, making the input invisible.
 
-4. **Stale edit value on re-render** -- `editValue` is set via `useState(value || '')` only on mount. If the deal data updates externally (e.g., real-time subscription), re-opening edit shows the old value.
+**Fix in `InlineEditCell.tsx`:**
+- Change the editing container layout from horizontal flex to a stacked layout for non-auto-save types: input on top, save/cancel buttons below (or overlaid to the right)
+- Add `min-w-[60px]` to the input wrapper so it never collapses
+- Move save/cancel buttons to overlay position (absolute, top-right) so they don't consume the input's width
 
-5. **Boolean switch needs manual save** -- The Switch toggle should auto-save when toggled, not require clicking the checkmark.
+### Bug 2: Currency `formatDisplayValue` crashes or shows wrong symbol
 
-6. **Date field lacks auto-save on blur** -- After picking a date, the user must click save. Should auto-save on blur.
+**Root cause (line 127-128):** `formatDisplayValue` for currency tries to access `value.currency_type` but the `value` prop is just a number (e.g., `deal.total_contract_value` is a number). The currency symbol lookup fails and defaults to `EUR`. Additionally, `Number(value).toLocaleString()` works on a number but the template string concatenation is fragile.
 
-### Solution
+**Fix in `InlineEditCell.tsx`:**
+- Remove the `value.currency_type` lookup from `formatDisplayValue`
+- Instead, just format the number with a default currency symbol or accept a `currencyType` prop
+- Or simplify to just show the number formatted
+
+### Bug 3: `getFieldType` returns `'text'` for select-type fields
+
+**Root cause (lines 191-198 in ListView.tsx):** Fields like `customer_challenges`, `relationship_strength`, `rfq_status`, `handoff_status`, `is_recurring` are enum/select fields in the Deal type, but `getFieldType` maps them as `'text'`. This means users see a plain text input instead of a dropdown when editing these fields.
+
+**Fix in `ListView.tsx`:**
+- Add select-type mappings for: `customer_challenges`, `relationship_strength`, `decision_maker_level`, `rfq_status`, `handoff_status`, `is_recurring`, `currency_type`
+- Populate `getFieldOptions` with the correct options for each field
+
+### Bug 4: `getFieldOptions` always returns empty array
+
+**Root cause (lines 200-202 in ListView.tsx):** `getFieldOptions` returns `[]` for all fields, so even if a field were typed as `'select'`, the dropdown would render empty.
+
+**Fix in `ListView.tsx`:**
+- Return proper options arrays based on field name (e.g., `customer_challenges` returns `['Open', 'Ongoing', 'Done']`)
+
+### Bug 5: Boolean switch uses stale `value` prop instead of `editValue`
+
+**Root cause (line 226 in InlineEditCell.tsx):** The boolean Switch uses `Boolean(value)` from props, not from `editValue` state. While the auto-save fires immediately so this is cosmetically fine, it's inconsistent and would break if auto-save behavior changes.
+
+**Fix:** Use `editValue` state for the Switch checked value.
+
+### Bug 6: Table cell overflow clips Select dropdowns
+
+**Root cause:** The table cells have strict `maxWidth` constraints and the table wrapper uses `overflow-scroll`. While `[&>div.relative]:!overflow-visible` attempts to fix this, Select dropdowns from Radix portal outside the cell -- this is actually fine since Radix uses portals. However, the SelectTrigger inside a narrow cell gets cut off visually.
+
+**Fix:** For select/stage/priority types in edit mode, ensure the SelectTrigger has a readable minimum width by setting `min-w-[100px]` on the select trigger.
+
+### Bug 7: Click-outside cancels instead of saving for text/number/currency
+
+**Root cause (lines 86-95 in InlineEditCell.tsx):** When clicking outside a text/number/currency input, `handleCancel` is called, discarding the user's edits. Most CRMs auto-save on blur/click-outside.
+
+**Fix:** Change click-outside behavior to call `handleSave` instead of `handleCancel` for text/number/currency types, matching user expectations.
+
+---
+
+### Technical Implementation
 
 **File: `src/components/InlineEditCell.tsx`**
 
-- Add an `onEditStart` callback prop so the parent can close any other active editor
-- Add an `isEditing` controlled prop (optional) alongside internal state, allowing the parent (`ListView`) to enforce "one editor at a time"
-- Sync `editValue` with `value` prop using `useEffect` so stale values are avoided
-- Auto-save for Select, Stage, Priority, and Boolean types: call `handleSave` immediately on value change (no manual checkmark needed)
-- Auto-save for Date on blur
-- Make save/cancel buttons smaller and more compact (`h-5 w-5`) to reduce overflow
-- Hide save/cancel buttons for auto-save types (stage, priority, select, boolean) since they save automatically
-- Add click-outside detection to auto-cancel text/number/textarea edits
+1. Change the editing container (line 290) to use relative positioning for the save/cancel overlay:
+   - Wrap the whole edit area; place save/cancel as absolute-positioned buttons so they don't steal input width
+   - Add `min-w-[60px]` to the input wrapper
+
+2. Fix `formatDisplayValue` for currency (lines 126-129):
+   - Remove `value.currency_type` access
+   - Just format as number with a basic symbol
+
+3. Fix boolean Switch (line 226): use `Boolean(editValue)` or pass through auto-save
+
+4. Change click-outside handler (line 90): call `handleSave()` instead of `handleCancel()`
 
 **File: `src/components/ListView.tsx`**
 
-- Add `editingCellKey` state (`string | null`) tracking the currently active edit cell (e.g., `"dealId-fieldName"`)
-- Pass `isEditing` and `onEditStart` props to each `InlineEditCell`
-- When a cell starts editing, set `editingCellKey` to that cell's key, which automatically closes any other active editor
-- This enforces the "only one edit field at a time" constraint
+5. Update `getFieldType` (lines 191-198) to include select-type fields:
+   ```
+   if (['customer_challenges', 'business_value', 'decision_maker_level'].includes(field)) return 'select';
+   if (['relationship_strength'].includes(field)) return 'select';
+   if (['rfq_status'].includes(field)) return 'select';
+   if (['handoff_status'].includes(field)) return 'select';
+   if (['is_recurring'].includes(field)) return 'select';
+   if (['currency_type'].includes(field)) return 'select';
+   ```
 
-### Technical Details
-
-**InlineEditCell changes:**
-- New props: `isEditing?: boolean`, `onEditStart?: () => void`, `onEditEnd?: () => void`
-- When `isEditing` prop is provided, it overrides internal state (controlled mode)
-- `useEffect` on `value` prop to sync `editValue` when not editing
-- For stage/priority/select: `onValueChange` calls save directly, then `onEditEnd`
-- For boolean: `onCheckedChange` calls save directly, then `onEditEnd`
-- For date: `onBlur` triggers save
-- For text/number/currency/textarea: keep save/cancel buttons but make them more compact
-
-**ListView changes:**
-- New state: `editingCellKey: string | null`
-- Each `InlineEditCell` receives:
-  - `isEditing={editingCellKey === \`\${deal.id}-\${column.field}\`}`
-  - `onEditStart={() => setEditingCellKey(\`\${deal.id}-\${column.field}\`)}`
-  - `onEditEnd={() => setEditingCellKey(null)}`
-
-### Summary of Fixes
-
-| Issue | Fix |
-|-------|-----|
-| Multiple editors open | Parent-controlled single `editingCellKey` state |
-| Select/Stage/Priority need manual save | Auto-save on value change |
-| Boolean needs manual save | Auto-save on toggle |
-| Date needs manual save | Auto-save on blur |
-| Save/Cancel overflow columns | Compact buttons; hidden for auto-save types |
-| Stale edit value | `useEffect` syncs value prop |
-
+6. Update `getFieldOptions` (lines 200-202) to return proper options:
+   ```
+   customer_challenges/business_value/decision_maker_level -> ['Open', 'Ongoing', 'Done']
+   relationship_strength -> ['Low', 'Medium', 'High']
+   rfq_status -> ['Drafted', 'Submitted', 'Rejected', 'Accepted']
+   handoff_status -> ['Not Started', 'In Progress', 'Complete']
+   is_recurring -> ['Yes', 'No', 'Unclear']
+   currency_type -> ['EUR', 'USD', 'INR']
+   ```
