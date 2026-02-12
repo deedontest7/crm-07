@@ -542,8 +542,13 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
           <div className="flex flex-col flex-1 min-h-0">
             <div className="h-[280px] overflow-y-auto" ref={historyScrollRef}>
               {isLoading ?
-              <div className="flex items-center justify-center py-6">
+              <div className="flex items-center justify-center h-full">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
+                </div> :
+              mergedHistory.length === 0 ?
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                  <History className="h-5 w-5 mb-2" />
+                  <span className="text-xs">No history yet</span>
                 </div> :
 
               <Table>
@@ -557,17 +562,7 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {mergedHistory.length === 0 ?
-                  <TableRow>
-                        <TableCell colSpan={5} className="text-center py-6 text-muted-foreground">
-                          <div className="flex items-center justify-center">
-                            <History className="h-4 w-4 mr-2" />
-                            <span className="text-xs">No history yet</span>
-                          </div>
-                        </TableCell>
-                      </TableRow> :
-
-                  mergedHistory.map((entry, index) =>
+                    {mergedHistory.map((entry, index) =>
                   <TableRow key={entry.id} className="text-xs group cursor-pointer hover:bg-muted/30">
                         <TableCell className="py-1.5 px-1 text-[10px] text-muted-foreground text-center w-8">{index + 1}</TableCell>
                         <TableCell className="py-1.5 px-2">
@@ -598,8 +593,7 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                       }
                         </TableCell>
                       </TableRow>
-                  )
-                  }
+                  )}
                   </TableBody>
                 </Table>
               }
@@ -610,8 +604,23 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
           <div className="flex flex-col flex-1 min-h-0">
             <div className="h-[280px] overflow-y-auto" ref={actionItemsScrollRef}>
               {isLoading ?
-              <div className="flex items-center justify-center py-6">
+              <div className="flex items-center justify-center h-full">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
+                </div> :
+              activeActionItems.length === 0 ?
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                  <ListTodo className="h-5 w-5 mb-2" />
+                  <span className="text-xs">No active action items</span>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="text-xs h-6 mt-1"
+                    onClick={() => {
+                      setAddDetailType('action_item');
+                      setAddDetailOpen(true);
+                    }}>
+                    Add one
+                  </Button>
                 </div> :
 
               <Table>
@@ -626,28 +635,7 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {activeActionItems.length === 0 ?
-                  <TableRow>
-                        <TableCell colSpan={6} className="text-center py-6 text-muted-foreground">
-                          <div className="flex flex-col items-center justify-center">
-                            <ListTodo className="h-4 w-4 mb-1" />
-                            <span className="text-xs">No active action items</span>
-                            <Button
-                          variant="link"
-                          size="sm"
-                          className="text-xs h-6 mt-1"
-                          onClick={() => {
-                            setAddDetailType('action_item');
-                            setAddDetailOpen(true);
-                          }}>
-
-                              Add one
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow> :
-
-                  activeActionItems.map((item, index) =>
+                    {activeActionItems.map((item, index) =>
                   <TableRow
                     key={item.id}
                     className="text-xs group cursor-pointer hover:bg-muted/30"
@@ -739,8 +727,7 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                           </div>
                         </TableCell>
                       </TableRow>
-                  )
-                  }
+                  )}
                   </TableBody>
                 </Table>
               }
