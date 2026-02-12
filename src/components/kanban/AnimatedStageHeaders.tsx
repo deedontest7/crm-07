@@ -1,5 +1,5 @@
 import { Fragment, useMemo } from "react";
-import { DealStage, STAGE_COLORS } from "@/types/deal";
+import { DealStage, STAGE_COLORS, STAGE_BG_COLORS } from "@/types/deal";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
@@ -85,6 +85,7 @@ export function AnimatedStageHeaders({
             <div
               className={cn(
                 'stage-header-item p-2 rounded-lg border transition-all duration-300',
+                STAGE_BG_COLORS[stage],
                 STAGE_COLORS[stage],
                 isActiveStage && (isExpanding || isExpanded || isCollapsing) && 'w-[280px] flex-shrink-0',
               )}
