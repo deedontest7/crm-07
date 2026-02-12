@@ -1,84 +1,67 @@
 
 
-## Changes to DealExpandedPanel.tsx - History & Action Items Tables
+## Fix Inline Editing Bugs and Enhance Consistency in Deals List View
 
-### 1. History Table Updates
+### Issues Identified
 
-**a. Column reorder: Move "Type" before "Time"**
-- Current: Checkbox | Changes | By | Time | Type | Actions
-- New: No | Changes | By | Type | Time | Actions
+1. **Multiple cells editable simultaneously** -- Each `InlineEditCell` manages its own `isEditing` state independently, so clicking multiple cells opens multiple editors at once, cluttering the row (visible in the screenshot with multiple save/cancel buttons across a single row).
 
-**b. Type column: Show text label instead of color dot**
-- Replace the colored dot + Tooltip with a plain text `<span>` showing the action type (e.g., "Note", "Call", "Update")
-- Use `capitalize` on the text, styled as `text-[10px] text-muted-foreground`
+2. **Select-based fields require manual save** -- Stage, Priority, and Select types open a dropdown, but the user still has to click the tiny checkmark to confirm. Industry standard: auto-save on selection for dropdowns.
 
-**c. "By" column: Make username fully visible**
-- Remove `max-w-[80px] truncate` from the By cell
-- Use `whitespace-nowrap` so names don't wrap
+3. **Save/Cancel buttons overflow column width** -- The input field + two icon buttons (check + X) squeeze into fixed-width cells, causing content to overflow or wrap awkwardly, especially in narrow columns.
 
-**d. Remove Delete action, replace dropdown with eye icon only**
-- Remove the entire `DropdownMenu` in the actions column
-- Replace with a simple `Button` (ghost, icon-only) with `Eye` icon that calls `setDetailLogId(log.id)`
-- Also remove the bulk delete bar (selectedLogIds bulk actions), checkbox column, and `handleDeleteLog`/`handleBulkDeleteLogs` references since we're recording history and shouldn't allow deletion
+4. **Stale edit value on re-render** -- `editValue` is set via `useState(value || '')` only on mount. If the deal data updates externally (e.g., real-time subscription), re-opening edit shows the old value.
 
-### 2. Add Type Filter Dropdown to History Section
+5. **Boolean switch needs manual save** -- The Switch toggle should auto-save when toggled, not require clicking the checkmark.
 
-The type filter dropdown already exists in the header (lines 458-472) with options: All, Note, Call, Meeting, Email, System. This matches the uploaded image exactly -- no changes needed here.
+6. **Date field lacks auto-save on blur** -- After picking a date, the user must click save. Should auto-save on blur.
 
-### 3. Add Sortable Column Headers to History Table
+### Solution
 
-- Make "Changes", "By", "Type", and "Time" column headers clickable for sorting
-- Add state: `historySortField` (string, default `'created_at'`) and `historySortDirection` (`'asc' | 'desc'`, default `'desc'`)
-- Show sort direction icons (ArrowUpDown / ArrowUp / ArrowDown) similar to ActionItemsTable
-- Sorting logic:
-  - **Changes**: Sort alphabetically by the change summary text
-  - **By**: Sort alphabetically by display name
-  - **Type**: Sort alphabetically by action type
-  - **Time**: Sort by `created_at` timestamp (already exists, just wire to header click)
-- Remove the standalone sort toggle button from the History section header (lines 474-486) since sorting moves to column headers
+**File: `src/components/InlineEditCell.tsx`**
 
-### 4. Add Sortable Column Headers to Action Items Table
+- Add an `onEditStart` callback prop so the parent can close any other active editor
+- Add an `isEditing` controlled prop (optional) alongside internal state, allowing the parent (`ListView`) to enforce "one editor at a time"
+- Sync `editValue` with `value` prop using `useEffect` so stale values are avoided
+- Auto-save for Select, Stage, Priority, and Boolean types: call `handleSave` immediately on value change (no manual checkmark needed)
+- Auto-save for Date on blur
+- Make save/cancel buttons smaller and more compact (`h-5 w-5`) to reduce overflow
+- Hide save/cancel buttons for auto-save types (stage, priority, select, boolean) since they save automatically
+- Add click-outside detection to auto-cancel text/number/textarea edits
 
-- Add state: `actionItemSortField` (string, default `'due_date'`) and `actionItemSortDirection` (`'asc' | 'desc'`, default `'asc'`)
-- Make "Task", "Assigned To", "Due Date", "Status", "Priority" headers clickable
-- Show sort direction icons matching ActionItemsTable module pattern
-- Update `sortedActionItems` to use the new field/direction state
-- Remove the standalone sort toggle button from the Action Items section header (lines 634-645)
+**File: `src/components/ListView.tsx`**
+
+- Add `editingCellKey` state (`string | null`) tracking the currently active edit cell (e.g., `"dealId-fieldName"`)
+- Pass `isEditing` and `onEditStart` props to each `InlineEditCell`
+- When a cell starts editing, set `editingCellKey` to that cell's key, which automatically closes any other active editor
+- This enforces the "only one edit field at a time" constraint
 
 ### Technical Details
 
-**File:** `src/components/DealExpandedPanel.tsx`
+**InlineEditCell changes:**
+- New props: `isEditing?: boolean`, `onEditStart?: () => void`, `onEditEnd?: () => void`
+- When `isEditing` prop is provided, it overrides internal state (controlled mode)
+- `useEffect` on `value` prop to sync `editValue` when not editing
+- For stage/priority/select: `onValueChange` calls save directly, then `onEditEnd`
+- For boolean: `onCheckedChange` calls save directly, then `onEditEnd`
+- For date: `onBlur` triggers save
+- For text/number/currency/textarea: keep save/cancel buttons but make them more compact
 
-**State changes:**
-- Replace `historySortDirection` with `historySortField` + `historySortDirection` (field-based sorting)
-- Replace `actionSortBy` with `actionItemSortField` + `actionItemSortDirection`
-- Remove `selectedLogIds` state (no more history selection/deletion)
+**ListView changes:**
+- New state: `editingCellKey: string | null`
+- Each `InlineEditCell` receives:
+  - `isEditing={editingCellKey === \`\${deal.id}-\${column.field}\`}`
+  - `onEditStart={() => setEditingCellKey(\`\${deal.id}-\${column.field}\`)}`
+  - `onEditEnd={() => setEditingCellKey(null)}`
 
-**History header (lines 534-546) -- new order:**
-```
-Checkbox removed | Changes (sortable) | By (sortable) | Type (sortable, text) | Time (sortable) | Eye icon column
-```
+### Summary of Fixes
 
-**Action Items header (lines 684-698) -- add sort icons:**
-```
-Checkbox | Task (sortable) | Assigned To (sortable) | Due Date (sortable) | Status (sortable) | Priority (sortable) | Module | Actions
-```
-
-**Removals:**
-- `handleDeleteLog` function (line 267-271)
-- `handleBulkDeleteLogs` function (line 273-279)
-- `selectedLogIds` state and related toggle functions (lines 163, 298-311)
-- Bulk delete bar in history (lines 515-522)
-- History row checkbox cells
-- History actions dropdown (lines 594-612), replaced with simple eye icon button
-
-**Sort icon helper** (reuse pattern from ActionItemsTable):
-```typescript
-const getHistorySortIcon = (field: string) => {
-  if (historySortField !== field) return <ArrowUpDown className="w-3 h-3 text-muted-foreground/60" />;
-  return historySortDirection === 'asc' 
-    ? <ArrowUp className="w-3 h-3 text-foreground" /> 
-    : <ArrowDown className="w-3 h-3 text-foreground" />;
-};
-```
+| Issue | Fix |
+|-------|-----|
+| Multiple editors open | Parent-controlled single `editingCellKey` state |
+| Select/Stage/Priority need manual save | Auto-save on value change |
+| Boolean needs manual save | Auto-save on toggle |
+| Date needs manual save | Auto-save on blur |
+| Save/Cancel overflow columns | Compact buttons; hidden for auto-save types |
+| Stale edit value | `useEffect` syncs value prop |
 
