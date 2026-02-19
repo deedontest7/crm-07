@@ -10,19 +10,21 @@ const DELETE_ORDER = [
   'deal_action_items', 'lead_action_items', 'action_items',
   'notifications', 'notification_preferences', 'saved_filters',
   'column_preferences', 'dashboard_preferences', 'user_sessions',
+  'security_audit_log',
   'deals', 'contacts', 'leads', 'accounts',
   'user_preferences', 'yearly_revenue_targets', 'page_permissions',
-  'keep_alive'
+  'keep_alive', 'profiles', 'user_roles'
 ]
 
 // Tables in correct insertion order (parents first, children last)
 const INSERT_ORDER = [
+  'profiles', 'user_roles',
   'accounts', 'leads', 'contacts', 'deals',
   'lead_action_items', 'deal_action_items', 'action_items',
   'notifications', 'notification_preferences', 'saved_filters',
   'column_preferences', 'dashboard_preferences', 'user_sessions',
   'user_preferences', 'yearly_revenue_targets', 'page_permissions',
-  'keep_alive'
+  'keep_alive', 'security_audit_log'
 ]
 
 const BATCH_SIZE = 1000
