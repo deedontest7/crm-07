@@ -11,7 +11,7 @@ const BACKUP_TABLES = [
   'notification_preferences', 'page_permissions', 'profiles',
   'user_preferences', 'user_roles', 'user_sessions',
   'saved_filters', 'column_preferences', 'dashboard_preferences',
-  'yearly_revenue_targets', 'keep_alive'
+  'yearly_revenue_targets', 'keep_alive', 'security_audit_log'
 ]
 
 const MODULE_TABLES: Record<string, string[]> = {
@@ -19,6 +19,7 @@ const MODULE_TABLES: Record<string, string[]> = {
   accounts: ['accounts'],
   deals: ['deals', 'deal_action_items'],
   action_items: ['action_items'],
+  leads: ['leads', 'lead_action_items'],
   notifications: ['notifications', 'notification_preferences'],
 }
 
