@@ -120,6 +120,11 @@ const parseFieldChanges = (details: Record<string, unknown> | null): FieldChange
 const parseChangeSummary = (action: string, details: Record<string, unknown> | null): string => {
   if (!details || typeof details !== 'object') return action === 'create' ? 'Created deal' : action;
 
+  // If there's already a formatted message (from manual action item logs), use it
+  if (details.message && typeof details.message === 'string') {
+    return details.message;
+  }
+
   const changes = parseFieldChanges(details);
   if (changes.length === 0) return action === 'create' ? 'Created deal' : 'Updated';
 
@@ -144,10 +149,12 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
   const [internalAddDetailOpen, setInternalAddDetailOpen] = useState(false);
   const addDetailOpen = externalAddDetailOpen !== undefined ? externalAddDetailOpen : internalAddDetailOpen;
   const setAddDetailOpen = (open: boolean) => {
+    if (!open) setAddDetailFromSection(null);
     if (onAddDetailOpenChange) onAddDetailOpenChange(open);else
     setInternalAddDetailOpen(open);
   };
   const [addDetailType, setAddDetailType] = useState<'log' | 'action_item'>('log');
+  const [addDetailFromSection, setAddDetailFromSection] = useState<null | 'log' | 'action_item'>(null);
   const [logType, setLogType] = useState<LogType>('Note');
   const [logMessage, setLogMessage] = useState('');
   const [isSavingLog, setIsSavingLog] = useState(false);
@@ -249,27 +256,28 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
 
   // Merged history: manual logs + completed action items, sorted ascending
   const mergedHistory = useMemo(() => {
-    const mappedLogs = manualAndStatusLogs.map((log) => ({
-      id: log.id,
-      message: (log.details as any)?.message || parseChangeSummary(log.action, log.details),
-      user_id: log.user_id,
-      created_at: log.created_at,
-      isCompletedAction: false,
-      originalLog: log
-    }));
+    const mappedLogs = manualAndStatusLogs.map((log) => {
+      const details = log.details as any;
+      let message = details?.message || parseChangeSummary(log.action, log.details);
 
-    const completedAsHistory = completedActionItems.map((item) => ({
-      id: `completed-${item.id}`,
-      message: `${item.title} - ${item.status}`,
-      user_id: item.assigned_to,
-      created_at: item.created_at,
-      isCompletedAction: true,
-      originalLog: null as AuditLog | null
-    }));
+      // Override with action item title + new status for both old and new format logs
+      if (details?.action_item_title && details?.field_changes?.status) {
+        message = `${details.action_item_title} → ${details.field_changes.status.new}`;
+      }
 
-    return [...mappedLogs, ...completedAsHistory].
+      return {
+        id: log.id,
+        message,
+        user_id: log.user_id,
+        created_at: log.created_at,
+        isCompletedAction: false,
+        originalLog: log
+      };
+    });
+
+    return [...mappedLogs].
     sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-  }, [manualAndStatusLogs, completedActionItems]);
+  }, [manualAndStatusLogs]);
 
   // Auto-scroll both sections to bottom when data changes
   useEffect(() => {
@@ -482,26 +490,28 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
     const item = actionItems.find((i) => i.id === id);
     await supabase.from('action_items').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
 
-    // Log status change in history with new format: "TaskTitle → NewStatus"
-    try {
-      await supabase.from('security_audit_log').insert({
-        action: 'update',
-        resource_type: 'deals',
-        resource_id: deal.id,
-        user_id: user?.id,
-        details: {
-          message: `${item?.title} → ${status}`,
-          field_changes: { status: { old: item?.status, new: status } },
-          action_item_id: id,
-          action_item_title: item?.title
-        }
-      });
-    } catch (e) {
-      console.error('Failed to log status change:', e);
+    // Only log to history when completed or cancelled
+    if (status === 'Completed' || status === 'Cancelled') {
+      try {
+        await supabase.from('security_audit_log').insert({
+          action: 'update',
+          resource_type: 'deals',
+          resource_id: deal.id,
+          user_id: user?.id,
+          details: {
+            message: `${item?.title} → ${status}`,
+            field_changes: { status: { old: item?.status, new: status } },
+            action_item_id: id,
+            action_item_title: item?.title
+          }
+        });
+      } catch (e) {
+        console.error('Failed to log status change:', e);
+      }
+      queryClient.invalidateQueries({ queryKey: ['deal-audit-logs', deal.id] });
     }
 
     invalidateActionItems();
-    queryClient.invalidateQueries({ queryKey: ['deal-audit-logs', deal.id] });
   };
 
   const handleAssignedToChange = async (id: string, userId: string | null) => {
@@ -539,8 +549,8 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
         {/* Content */}
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden gap-1">
           {/* History Section */}
-          <div className="flex flex-col flex-1 min-h-0">
-            <div className="h-[280px] overflow-y-auto" ref={historyScrollRef}>
+          <div className="flex flex-col flex-1 min-h-0 relative">
+            <div className="h-[280px] overflow-y-auto relative" ref={historyScrollRef}>
               {isLoading ?
               <div className="flex items-center justify-center py-6">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
@@ -549,8 +559,8 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
               <Table>
                   <TableHeader className="sticky top-0 z-10 bg-card">
                     <TableRow className="text-[11px] bg-muted/50">
-                      <TableHead className="h-7 px-1 text-[11px] font-bold text-center" style={{ width: '3%' }}>#</TableHead>
-                      <TableHead className="h-7 px-2 text-[11px] font-bold" style={{ width: '74%' }}>Changes</TableHead>
+                      <TableHead className="h-7 px-1" style={{ width: '3%' }}></TableHead>
+                      <TableHead className="h-7 px-2 text-[11px] font-bold" style={{ width: '74%' }}>Updates</TableHead>
                       <TableHead className="h-7 px-2 text-[11px] font-bold" style={{ width: '10%' }}>By</TableHead>
                       <TableHead className="h-7 px-2 text-[11px] font-bold" style={{ width: '10%' }}>Time</TableHead>
                       <TableHead className="h-7 px-1" style={{ width: '3%' }}></TableHead>
@@ -569,7 +579,7 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
 
                   mergedHistory.map((entry, index) =>
                   <TableRow key={entry.id} className="text-xs group cursor-pointer hover:bg-muted/30">
-                        <TableCell className="py-1.5 px-1 text-[10px] text-muted-foreground text-center w-8">{index + 1}</TableCell>
+                        <TableCell className="py-1.5 px-1 text-[11px] text-muted-foreground text-center">{index + 1}</TableCell>
                         <TableCell className="py-1.5 px-2">
                           {entry.originalLog ?
                       <button
@@ -579,15 +589,15 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                               {entry.message}
                             </button> :
 
-                      <span className="text-left whitespace-normal break-words text-xs text-muted-foreground italic">
+                      <span className="text-left whitespace-normal break-words text-xs text-muted-foreground">
                               {entry.message}
                             </span>
                       }
                         </TableCell>
-                        <TableCell className="py-1.5 px-2 text-muted-foreground whitespace-nowrap text-[10px]">
+                        <TableCell className="py-1.5 px-2 text-muted-foreground whitespace-nowrap text-[11px]">
                           {entry.user_id ? displayNames[entry.user_id] || getUserDisplayName(entry.user_id) || '...' : '-'}
                         </TableCell>
-                        <TableCell className="py-1.5 px-2 text-[10px] text-muted-foreground whitespace-nowrap w-24">
+                        <TableCell className="py-1.5 px-2 text-[11px] text-muted-foreground whitespace-nowrap w-24">
                           {formatHistoryDateTime(new Date(entry.created_at))}
                         </TableCell>
                         <TableCell onClick={(e) => e.stopPropagation()} className="py-1.5 px-1 w-8">
@@ -604,11 +614,22 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                 </Table>
               }
             </div>
+            <div className="flex justify-end px-2 py-1">
+              <button
+                onClick={() => {
+                  setAddDetailType('log');
+                  setAddDetailFromSection('log');
+                  setAddDetailOpen(true);
+                }}
+                className="h-7 w-7 rounded-full bg-primary text-primary-foreground shadow-md flex items-center justify-center hover:bg-primary/90 transition-colors">
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
-          {/* Action Items Section */}
+          {/* Action Items Section - relative for floating button */}
           <div className="flex flex-col flex-1 min-h-0">
-            <div className="h-[280px] overflow-y-auto" ref={actionItemsScrollRef}>
+            <div className="h-[280px] overflow-y-auto relative" ref={actionItemsScrollRef}>
               {isLoading ?
               <div className="flex items-center justify-center py-6">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
@@ -617,8 +638,8 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
               <Table>
                   <TableHeader className="sticky top-0 z-10 bg-card">
                     <TableRow className="text-[11px] bg-muted/50">
-                      <TableHead className="h-7 px-1 text-[11px] font-bold text-center" style={{ width: '3%' }}>#</TableHead>
-                      <TableHead className="h-7 px-2 text-[11px] font-bold" style={{ width: '70%' }}>Task</TableHead>
+                      <TableHead className="h-7 px-1" style={{ width: '3%' }}></TableHead>
+                      <TableHead className="h-7 px-2 text-[11px] font-bold" style={{ width: '70%' }}>Action Items</TableHead>
                       <TableHead className="h-7 px-2 text-[11px] font-bold" style={{ width: '9%' }}>Assigned</TableHead>
                       <TableHead className="h-7 px-2 text-[11px] font-bold" style={{ width: '8%' }}>Due</TableHead>
                       <TableHead className="h-7 px-1 text-[11px] font-bold text-center" style={{ width: '7%' }}>Status</TableHead>
@@ -632,17 +653,17 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                           <div className="flex flex-col items-center justify-center">
                             <ListTodo className="h-4 w-4 mb-1" />
                             <span className="text-xs">No active action items</span>
-                            <Button
-                          variant="link"
-                          size="sm"
-                          className="text-xs h-6 mt-1"
-                          onClick={() => {
-                            setAddDetailType('action_item');
-                            setAddDetailOpen(true);
-                          }}>
+                            
 
-                              Add one
-                            </Button>
+
+
+
+
+
+
+
+
+
                           </div>
                         </TableCell>
                       </TableRow> :
@@ -653,7 +674,7 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                     className="text-xs group cursor-pointer hover:bg-muted/30"
                     onClick={() => handleActionItemClick(item)}>
 
-                        <TableCell className="py-1.5 px-1 text-[10px] text-muted-foreground text-center w-8">{index + 1}</TableCell>
+                        <TableCell className="py-1.5 px-1 text-[11px] text-muted-foreground text-center">{index + 1}</TableCell>
 
                         {/* Task */}
                         <TableCell className="py-1.5 px-2">
@@ -744,6 +765,17 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                   </TableBody>
                 </Table>
               }
+            </div>
+            <div className="flex justify-end px-2 py-1">
+              <button
+                onClick={() => {
+                  setAddDetailType('action_item');
+                  setAddDetailFromSection('action_item');
+                  setAddDetailOpen(true);
+                }}
+                className="h-7 w-7 rounded-full bg-primary text-primary-foreground shadow-md flex items-center justify-center hover:bg-primary/90 transition-colors">
+                <Plus className="h-4 w-4" />
+              </button>
             </div>
           </div>
         </div>
@@ -851,6 +883,7 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {addDetailFromSection === null &&
             <div className="space-y-2">
               <Label className="text-xs">Type</Label>
               <Select value={addDetailType} onValueChange={(v) => setAddDetailType(v as 'log' | 'action_item')}>
@@ -858,11 +891,12 @@ export const DealExpandedPanel = ({ deal, onClose, onOpenActionItemModal, addDet
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="log">Log</SelectItem>
+                  <SelectItem value="log">Update</SelectItem>
                   <SelectItem value="action_item">Action Item</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            }
 
             {addDetailType === 'log' ?
             <>
