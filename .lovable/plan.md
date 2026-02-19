@@ -1,162 +1,134 @@
 
-## Remove Leads Module — Full System Update
 
-### Overview
-This implements the approved plan to remove the Leads standalone module from the application UI. The `leads` database table and all its data are preserved. All changes are purely at the application layer.
+## Backup System - Complete Fix and Improvements
 
----
+### Issues Found
 
-### Files to DELETE (14 dead code files)
-
-These files are no longer reachable and will be removed:
-
-| File |
-|------|
-| `src/pages/Leads.tsx` |
-| `src/components/LeadTable.tsx` |
-| `src/components/LeadModal.tsx` |
-| `src/components/LeadColumnCustomizer.tsx` |
-| `src/components/LeadStatusFilter.tsx` |
-| `src/components/LeadDeleteConfirmDialog.tsx` |
-| `src/components/LeadsHeader.tsx` |
-| `src/components/LeadsTable.tsx` |
-| `src/components/LeadsTableRefactored.tsx` |
-| `src/components/LeadsTableSimple.tsx` |
-| `src/hooks/useSecureLeads.tsx` |
-| `src/hooks/useLeadDeletion.tsx` |
-| `src/hooks/useLeadColumnWidths.tsx` |
-| `src/hooks/useSimpleLeadsImportExport.tsx` |
+1. **Scheduled Backups never fire** -- `is_enabled: true` but `last_run_at` and `next_run_at` are both null. No cron job or edge function exists to check the schedule and trigger backups.
+2. **Module Backup missing modules** -- UI only shows Contacts, Accounts, Deals, Tasks. Missing: Leads, Notifications.
+3. **Scheduled Backups have no scope setting** -- Can't choose full vs module backup for schedules.
+4. **Backup History has no scrollbar** -- Uses `max-h-[400px]` with `overflow-auto` but no proper ScrollArea component.
+5. **Delete option should be removed** from history per user request.
+6. **Restore logic issues** -- `profiles` and `user_roles` are in `BACKUP_TABLES` but missing from `DELETE_ORDER` and `INSERT_ORDER` in restore function. Also `security_audit_log` is not backed up.
+7. **Delete dialog and related code** still present but should be removed.
+8. **Storage download fails** for non-service-role clients (no storage RLS policies on backups bucket).
 
 ---
 
-### Files to MODIFY (10 files + 1 edge function + 1 DB data change)
+### Plan
 
-**1. `src/App.tsx` — line 30**
-Remove `/leads` from `controlledScrollRoutes`:
+#### 1. Add Leads and Notifications to Module Backup UI
+
+**File: `src/components/settings/BackupRestoreSettings.tsx`**
+- Add to `MODULES` array:
+  - `{ id: 'leads', name: 'Leads', icon: FileText, color: 'text-blue-500' }`
+  - `{ id: 'notifications', name: 'Notifications', icon: Bell, color: 'text-yellow-500' }`
+- Add `Bell` to lucide imports
+- Update `fetchModuleCounts` to include `leads` and `notifications` tables
+- Change grid from `md:grid-cols-5` to `md:grid-cols-6` to fit 6 modules
+
+#### 2. Add `leads` module mapping to edge function
+
+**File: `supabase/functions/create-backup/index.ts`**
+- Add `leads: ['leads', 'lead_action_items']` to `MODULE_TABLES`
+- Add `security_audit_log` to `BACKUP_TABLES`
+
+#### 3. Fix Restore logic -- add missing tables to DELETE_ORDER and INSERT_ORDER
+
+**File: `supabase/functions/restore-backup/index.ts`**
+- Add `profiles` and `user_roles` to both `DELETE_ORDER` and `INSERT_ORDER` in correct positions
+- Add `security_audit_log` to both arrays
+- For `DELETE_ORDER`: `profiles` and `user_roles` should come after `user_sessions` (they are parent-like)
+- For `INSERT_ORDER`: `profiles` and `user_roles` should come before `user_preferences` (they are parents)
+
+#### 4. Scheduled Backups -- create actual cron infrastructure
+
+**a. New edge function: `supabase/functions/scheduled-backup/index.ts`**
+- Reads `backup_schedules` where `is_enabled = true` and `next_run_at <= now()`
+- For each due schedule, calls the `create-backup` function logic internally (fetches tables, uploads to storage)
+- Supports `backup_scope` (full or module name) from the schedule record
+- Updates `last_run_at = now()` and computes `next_run_at` based on frequency
+- Uses service role key, no JWT verification needed
+
+**b. Database migration:**
+- Enable `pg_cron` and `pg_net` extensions
+- Add `backup_scope` column (text, default 'full') and `backup_module` column (text, nullable) to `backup_schedules`
+- Create hourly cron job that calls `scheduled-backup` edge function
+
+**c. Add to `supabase/config.toml`:**
 ```
-Before: ['/action-items', '/leads', '/contacts', '/deals', '/settings', '/notifications', '/', '/accounts']
-After:  ['/action-items', '/contacts', '/deals', '/settings', '/notifications', '/', '/accounts']
-```
-
-**2. `src/components/settings/BackupRestoreSettings.tsx` — line 54**
-Remove the Leads entry from the `MODULES` array. The screenshot confirms "Leads" appears as the first module backup card — this removes it. The `fetchModuleCounts` function on line 147 also fetches `leads` count — remove `'leads'` from that array too:
-```ts
-// Remove:
-{ id: 'leads', name: 'Leads', icon: FileText, color: 'text-blue-500' },
-// From MODULES array (line 54)
-
-// Also update fetchModuleCounts (line 147):
-const tables = ['contacts', 'accounts', 'deals', 'action_items'];
-// (remove 'leads')
-```
-The `getBackupLabel` function (line 75) references `MODULES.find(m => m.id === backup.module_name)` — since existing "Leads" backups in history will no longer match, they'll fall back to showing `backup.module_name` ("leads") directly. This is acceptable for historical backups — they'll display as "leads" in the Type column.
-
-**3. `supabase/functions/create-backup/index.ts` — line 18**
-Remove the `leads` entry from `MODULE_TABLES`:
-```ts
-// Remove:
-leads: ['leads', 'lead_action_items'],
-```
-`BACKUP_TABLES` on line 9 keeps `'leads'` and `'lead_action_items'` for full backups.
-Edge function will be redeployed automatically.
-
-**4. `src/hooks/useActionItems.tsx` — line 9**
-Change the `ModuleType` type:
-```ts
-// Before:
-export type ModuleType = 'deals' | 'leads' | 'contacts';
-// After:
-export type ModuleType = 'deals' | 'contacts';
-```
-
-**5. `src/components/ActionItemModal.tsx` — lines 70-74, 168-169**
-- Remove `{ value: 'leads', label: 'Leads' }` from `moduleOptions`
-- Remove the `case 'leads'` branch in `getRecordPlaceholder()` (the `default` case already returns 'Select record...' so no fallback gap)
-
-**6. `src/hooks/useModuleRecords.tsx`**
-Remove all `case 'leads'` branches from all three hooks:
-- `useModuleRecords` (line 24-27): remove leads case
-- `useModuleRecordName` (line 65-68): remove leads case
-- `useModuleRecordNames` (lines 97, 114-123): remove `leadIds` variable and its fetch block
-
-**7. `src/components/ActionItemsTable.tsx`**
-- Remove `LeadModal` import (line 17)
-- Remove `leadModalOpen` state (line 102)
-- Remove `selectedLead` state (line 105)
-- Remove the `leads` branch in `handleLinkedRecordClick` (lines 190-199): when a legacy lead-linked action item icon is clicked, it will silently do nothing (no modal opens) — acceptable for historical data
-- Keep the `UserPlus` icon display for `leads` type (line 465) so historical items still render the icon
-- Remove the `<LeadModal .../>` JSX block (lines 525-534)
-
-**8. `src/components/NotificationBell.tsx` — lines 57-68**
-Update lead-related navigation to redirect to `/deals`:
-```ts
-// Before:
-} else if (notification.module_type === 'leads' && notification.module_id) {
-  navigate(`/leads?highlight=${notification.module_id}`);
-// After:
-} else if (notification.module_type === 'leads' && notification.module_id) {
-  navigate(`/deals`);
-
-// Before:
-} else if (notification.lead_id) {
-  navigate(`/leads?highlight=${notification.lead_id}`);
-// After:
-} else if (notification.lead_id) {
-  navigate(`/deals`);
-
-// Before:
-} else if (notification.notification_type === 'lead_update') {
-  navigate('/leads');
-// After:
-} else if (notification.notification_type === 'lead_update') {
-  navigate('/deals');
+[functions.scheduled-backup]
+verify_jwt = false
 ```
 
-**9. `src/components/settings/AuditLogsSettings.tsx` — lines 21, 155, 158**
-- Line 21: `type ValidTableName = 'contacts' | 'deals'` (remove `'leads'`)
-- Line 155: `['contacts', 'deals'].includes(log.resource_type)` (remove `'leads'`)
-- Line 158: `['contacts', 'deals'].includes(t)` (remove `'leads'`)
+**d. Update Schedule UI** in `BackupRestoreSettings.tsx`:
+- Add frequency dropdown (Daily, Every 2 Days, Weekly)
+- Add scope dropdown (Full System, or each module name)
+- Show last run and next run timestamps
+- Save `backup_scope` and `backup_module` to the schedule record
 
-**10. `src/components/ContactTable.tsx` — lines 196-236, 265**
-- Remove the entire `handleConvertToLead` function (lines 196-236)
-- Remove `onConvertToLead={handleConvertToLead}` prop passed to `ContactTableBody` (line 265)
+#### 5. Backup History -- ScrollArea and remove delete
 
-**11. `src/components/contact-table/ContactTableBody.tsx` — lines 5, 48, 321-326**
-- Remove `UserPlus` from the import (line 5) — only used for "Convert to Lead"
-- Remove `onConvertToLead?: (contact: Contact) => void` from the props interface (line 48)
-- Remove the "Convert to Lead" `DropdownMenuItem` block (lines 321-326)
-- Remove the destructured `onConvertToLead` from the function parameters
+**File: `src/components/settings/BackupRestoreSettings.tsx`**
+- Import `ScrollArea` component
+- Wrap the history table in `<ScrollArea className="h-[400px]">` for proper scrollbar
+- Remove the Delete button from each history row (lines 516-527)
+- Remove `handleDeleteClick`, `handleDeleteConfirm`, delete-related state, and the Delete AlertDialog
+- Add a status badge column showing completed/failed/in_progress with colors
+- Add a refresh button to the history header
+
+#### 6. Storage RLS -- allow admin downloads
+
+**Database migration:**
+- Add SELECT policy on `storage.objects` for the `backups` bucket allowing authenticated users who are admins (using `is_user_admin()` function) to read/download files
 
 ---
 
-### Database Data Change
+### Technical Details
 
-Execute SQL to delete the Leads row from `page_permissions`:
-```sql
-DELETE FROM page_permissions WHERE route = '/leads';
+**Files to create:**
+- `supabase/functions/scheduled-backup/index.ts`
+
+**Files to modify:**
+- `supabase/functions/create-backup/index.ts` -- add `leads` module, add `security_audit_log`
+- `supabase/functions/restore-backup/index.ts` -- add `profiles`, `user_roles`, `security_audit_log` to ordering arrays
+- `src/components/settings/BackupRestoreSettings.tsx` -- add modules, scheduled backup scope UI, ScrollArea for history, remove delete
+- `supabase/config.toml` -- add `scheduled-backup` function config
+
+**Database migrations:**
+1. Enable `pg_cron` and `pg_net` extensions
+2. Add `backup_scope` and `backup_module` columns to `backup_schedules`
+3. Create cron job: hourly call to `scheduled-backup` edge function
+4. Add storage RLS policy for backups bucket admin read access
+
+**Scheduled backup edge function logic:**
+```text
+1. Read backup_schedules where is_enabled = true
+2. For each schedule where next_run_at <= now():
+   a. Determine tables based on backup_scope/backup_module
+   b. Fetch all data, create JSON, upload to storage
+   c. Insert backup record with backup_type = 'scheduled'
+   d. Update schedule: last_run_at = now(), next_run_at = computed
+3. Return summary
 ```
-This removes the Leads entry (id: `3e19f050-c9c8-461a-90ca-45d6dfcf5900`) from the Page Access Settings admin panel. The `PageAccessSettings` component dynamically renders from this table, so no code changes are needed there.
 
----
+**Restore ordering fix:**
+```text
+DELETE_ORDER (children first):
+  deal_action_items, lead_action_items, action_items,
+  notifications, notification_preferences, saved_filters,
+  column_preferences, dashboard_preferences, user_sessions,
+  security_audit_log,
+  deals, contacts, leads, accounts,
+  user_preferences, yearly_revenue_targets, page_permissions,
+  keep_alive, profiles, user_roles
 
-### What Is Preserved (Not Changed)
-
-- `leads` and `lead_action_items` database tables — data intact
-- `BACKUP_TABLES` in edge function — leads still in full backups
-- `src/hooks/import-export/leadsCSVExporter.ts` — backward compat with existing backups
-- `src/hooks/import-export/leadsCSVProcessor.ts` — backward compat
-- `src/hooks/import-export/columnConfig.ts` — backward compat
-- `supabase/functions/restore-backup/index.ts` — no change needed
-- `supabase/functions/migrate-leads-to-contacts/index.ts` — unrelated
-- `src/components/LeadSearchableDropdown.tsx` — used in Deal forms
-- `src/components/ConvertToDealModal.tsx` — still valid
-- Database triggers — remain active
-- `UserPlus` icon in ActionItemsTable — kept for historical lead items display
-
----
-
-### Execution Order
-1. Delete the `page_permissions` DB row (SQL migration)
-2. Modify `create-backup` edge function, redeploy
-3. Update all 10 frontend files
-4. Delete 14 dead code files
+INSERT_ORDER (parents first):
+  profiles, user_roles,
+  accounts, leads, contacts, deals,
+  lead_action_items, deal_action_items, action_items,
+  notifications, notification_preferences, saved_filters,
+  column_preferences, dashboard_preferences, user_sessions,
+  user_preferences, yearly_revenue_targets, page_permissions,
+  keep_alive, security_audit_log
+```
