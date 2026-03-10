@@ -72,9 +72,9 @@ const statusConfig: Record<ActionItemStatus, {
   }
 };
 const moduleLabels: Record<string, string> = {
-  deals: 'Deal',
-  leads: 'Lead',
-  contacts: 'Contact'
+  accounts: 'Account',
+  contacts: 'Contact',
+  deals: 'Deal'
 };
 export function ActionItemsTable({
   actionItems,
