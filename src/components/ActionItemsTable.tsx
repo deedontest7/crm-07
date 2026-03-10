@@ -461,7 +461,7 @@ export function ActionItemsTable({
                             {(() => {
                               const t = item.module_type.toLowerCase();
                               if (t === 'deal' || t === 'deals') return <Handshake className="h-4 w-4" />;
-                              if (t === 'lead' || t === 'leads') return <UserPlus className="h-4 w-4" />;
+                              if (t === 'account' || t === 'accounts') return <UserPlus className="h-4 w-4" />;
                               if (t === 'contact' || t === 'contacts') return <Users className="h-4 w-4" />;
                               return <span className="text-xs">{t[0]?.toUpperCase()}</span>;
                             })()}
