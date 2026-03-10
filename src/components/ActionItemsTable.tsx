@@ -185,16 +185,16 @@ export function ActionItemsTable({
           setSelectedDeal(data as Deal);
           setDealModalOpen(true);
         }
-      } else if (normalizedType === 'lead' || normalizedType === 'leads') {
-        // Leads are now deals at Lead stage - open as deal
+      } else if (normalizedType === 'account' || normalizedType === 'accounts') {
+        // Account records - just show a toast for now since no account modal exists in this context
         const { data } = await supabase
-          .from('deals')
+          .from('accounts')
           .select('*')
           .eq('id', moduleId)
           .maybeSingle();
         if (data) {
-          setSelectedDeal(data as Deal);
-          setDealModalOpen(true);
+          // Navigate or show account - for now just log
+          console.log('Account clicked:', data);
         }
       } else if (normalizedType === 'contact' || normalizedType === 'contacts') {
         const { data } = await supabase
