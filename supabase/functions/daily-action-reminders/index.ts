@@ -235,7 +235,7 @@ Deno.serve(async (req) => {
     } catch { /* no body or not JSON */ }
 
     if (testUserId) {
-      console.log(`TEST MODE: Running for user ${testUserId} only, bypassing time checks`);
+      console.log(`[TEST MODE] Running for user ${testUserId} only, bypassing time checks`);
 
       const { data: existingPref } = await supabase
         .from('notification_preferences')
@@ -247,6 +247,7 @@ Deno.serve(async (req) => {
         await supabase
           .from('notification_preferences')
           .insert({ user_id: testUserId, task_reminders: true, email_notifications: true });
+        console.log(`[TEST MODE] Created notification_preferences for user ${testUserId}`);
       } else {
         await supabase
           .from('notification_preferences')
@@ -268,10 +269,13 @@ Deno.serve(async (req) => {
 
     if (prefsError) throw prefsError;
     if (!prefs || prefs.length === 0) {
+      console.log('[INFO] No users with task_reminders enabled found');
       return new Response(JSON.stringify({ message: 'No users with task reminders enabled' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    console.log(`[INFO] Found ${prefs.length} users with task_reminders enabled`);
 
     const userIds = prefs.map(p => p.user_id);
     const { data: profiles, error: profilesError } = await supabase
@@ -285,22 +289,31 @@ Deno.serve(async (req) => {
     const now = new Date();
     let notificationsSent = 0;
     let emailsSent = 0;
+    const skipped: { userId: string; reason: string }[] = [];
 
     let graphToken: string | null = null;
     const anyEmailEnabled = prefs.some(p => p.email_notifications);
     if (anyEmailEnabled) {
       try {
         graphToken = await getGraphAccessToken();
-        console.log('Graph API token acquired successfully');
+        console.log('[INFO] Graph API token acquired successfully');
       } catch (err) {
-        console.error('Failed to acquire Graph token, emails will be skipped:', err);
+        console.error('[ERROR] Failed to acquire Graph token, emails will be skipped:', err);
       }
     }
 
     for (const pref of prefs) {
       const profile = profileMap.get(pref.user_id);
+      const userName = profile?.full_name || 'Unknown';
+      const userEmail = profile?.['Email ID'] || null;
       const timezone = profile?.timezone || 'Asia/Kolkata';
-      const reminderTime = pref.daily_reminder_time || '09:00';
+      const reminderTime = pref.daily_reminder_time || '07:00';
+
+      if (!profile) {
+        console.log(`[SKIP] User ${pref.user_id}: No profile found`);
+        skipped.push({ userId: pref.user_id, reason: 'no_profile' });
+        continue;
+      }
 
       const userNow = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
       const userHour = userNow.getHours();
@@ -313,11 +326,15 @@ Deno.serve(async (req) => {
       const diff = userTotalMinutes - reminderTotalMinutes;
 
       if (!testUserId && (diff < 0 || diff >= 15)) {
+        console.log(`[SKIP] ${userName} (${pref.user_id}): Not in time window. User time: ${userHour}:${userMinute.toString().padStart(2, '0')} (${timezone}), reminder: ${reminderTime}, diff: ${diff}min`);
+        skipped.push({ userId: pref.user_id, reason: `time_window (user=${userHour}:${userMinute}, reminder=${reminderTime}, diff=${diff}min)` });
         continue;
       }
 
       const userToday = `${userNow.getFullYear()}-${(userNow.getMonth() + 1).toString().padStart(2, '0')}-${userNow.getDate().toString().padStart(2, '0')}`;
       if (!testUserId && pref.last_reminder_sent_at === userToday) {
+        console.log(`[SKIP] ${userName} (${pref.user_id}): Already sent today (${userToday})`);
+        skipped.push({ userId: pref.user_id, reason: 'already_sent_today' });
         continue;
       }
 
@@ -329,13 +346,18 @@ Deno.serve(async (req) => {
         .is('archived_at', null);
 
       if (aiError) {
-        console.error(`Error fetching action items for user ${pref.user_id}:`, aiError);
+        console.error(`[ERROR] Fetching action items for ${userName} (${pref.user_id}):`, aiError);
+        skipped.push({ userId: pref.user_id, reason: 'action_items_query_error' });
         continue;
       }
 
       if (!actionItems || actionItems.length === 0) {
+        console.log(`[SKIP] ${userName} (${pref.user_id}): No pending action items`);
+        skipped.push({ userId: pref.user_id, reason: 'no_pending_items' });
         continue;
       }
+
+      console.log(`[PROCESS] ${userName} (${pref.user_id}): ${actionItems.length} pending items, email: ${userEmail || 'NONE'}`);
 
       const overdueCount = actionItems.filter(item => {
         if (!item.due_date) return false;
@@ -360,18 +382,15 @@ Deno.serve(async (req) => {
         });
 
       if (notifError) {
-        console.error(`Error inserting notification for user ${pref.user_id}:`, notifError);
+        console.error(`[ERROR] Inserting notification for ${userName} (${pref.user_id}):`, notifError);
         continue;
       }
 
       notificationsSent++;
-      console.log(`Sent in-app reminder to user ${pref.user_id}: ${message}`);
+      console.log(`[OK] In-app notification sent to ${userName}`);
 
       // Send email if enabled and Graph token available
       if (pref.email_notifications && graphToken && profile) {
-        const userEmail = profile['Email ID'];
-        const userName = profile.full_name || 'User';
-
         if (userEmail) {
           try {
             const subject = overdueCount > 0
@@ -383,9 +402,9 @@ Deno.serve(async (req) => {
 
             if (sent) {
               emailsSent++;
-              console.log(`Email sent to ${userEmail} for user ${pref.user_id}`);
+              console.log(`[OK] Email sent to ${userEmail} (${userName})`);
 
-              // Record in email_history
+              // Record in email_history with 'delivered' status
               const senderEmail = Deno.env.get('AZURE_SENDER_EMAIL') || 'system@crm.realthingks.com';
               await supabase
                 .from('email_history')
@@ -395,17 +414,23 @@ Deno.serve(async (req) => {
                   sender_email: senderEmail,
                   subject,
                   body: htmlBody,
-                  status: 'sent',
+                  status: 'delivered',
                   sent_by: pref.user_id,
                   delivered_at: new Date().toISOString(),
                 });
+            } else {
+              console.error(`[FAIL] Email failed for ${userEmail} (${userName})`);
             }
           } catch (emailErr) {
-            console.error(`Error sending email to ${userEmail}:`, emailErr);
+            console.error(`[ERROR] Sending email to ${userEmail} (${userName}):`, emailErr);
           }
         } else {
-          console.log(`No email found for user ${pref.user_id}, skipping email`);
+          console.log(`[SKIP-EMAIL] ${userName} (${pref.user_id}): No email address in profile`);
         }
+      } else if (!pref.email_notifications) {
+        console.log(`[SKIP-EMAIL] ${userName}: email_notifications disabled`);
+      } else if (!graphToken) {
+        console.log(`[SKIP-EMAIL] ${userName}: No Graph token available`);
       }
 
       // Update last_reminder_sent_at
@@ -415,13 +440,20 @@ Deno.serve(async (req) => {
         .eq('user_id', pref.user_id);
     }
 
-    return new Response(JSON.stringify({
+    const summary = {
       message: `Processed ${prefs.length} users, sent ${notificationsSent} in-app reminders, ${emailsSent} emails`,
-    }), {
+      processed: prefs.length,
+      notifications_sent: notificationsSent,
+      emails_sent: emailsSent,
+      skipped: skipped,
+    };
+    console.log(`[SUMMARY] ${JSON.stringify(summary)}`);
+
+    return new Response(JSON.stringify(summary), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
-    console.error('Error in daily-action-reminders:', error);
+    console.error('[FATAL] Error in daily-action-reminders:', error);
     return new Response(JSON.stringify({ error: (error as Error).message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

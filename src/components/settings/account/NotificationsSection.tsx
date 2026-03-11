@@ -48,7 +48,7 @@ const ToggleChip = ({ label, checked, onChange }: { label: string; checked: bool
 );
 
 const NotificationsSection = ({ notificationPrefs, setNotificationPrefs, userId, userTimezone }: NotificationsSectionProps) => {
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef<string>(JSON.stringify(notificationPrefs));
 
   const saveNotificationPrefs = useCallback(async (prefs: NotificationPrefs) => {
