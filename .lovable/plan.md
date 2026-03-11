@@ -1,97 +1,91 @@
 
 
-## Notification Settings - Complete Audit and Fix
+## Fix Note Editor Bullet Point & Stakeholders Layout Issues
 
-### Bugs Found
+### Issues Found
 
-1. **"Leads" in Modules section** -- Should be "Deals" since Leads module was removed and Deals is a core module. The DB column `leads_notifications` maps to the old Leads module.
-2. **push_notifications toggle missing** -- Column exists in DB, preference is loaded/saved, but no UI toggle is rendered.
-3. **Email/In-App toggles not visually responsive** -- The `ToggleChip` component works functionally but the Switch may appear stuck due to auto-save debounce (600ms). No visual feedback that the save happened.
-4. **"Lead Assigned" event is dead** -- No backend trigger checks the `lead_assigned` preference. The `create_lead_notification` trigger fires unconditionally. Since Leads was removed, this event name is confusing.
-5. **"Meeting Reminders" event is dead** -- No meeting system exists in the app. No trigger or edge function generates meeting-related notifications. This is a dead toggle.
-6. **"Weekly Digest" event is dead** -- No weekly digest edge function or cron job exists. Toggle saves to DB but nothing reads it.
-7. **Notification triggers ignore user preferences** -- `create_unified_action_item_notification`, `create_deal_notification`, `create_lead_notification` all insert notifications without checking if the user has the relevant preference enabled (e.g., `deal_updates`, `contacts_notifications`).
-8. **No save confirmation** -- User has no feedback that toggling a switch actually persisted.
+1. **Bullet point moves when typing**: `autoFocus` on the Textarea (line 633) places the cursor at position 0 (before `"• "`), so typing inserts text before the bullet instead of after it.
 
-### Plan
+2. **Notes panel lacks proper scrollbar**: The notes summary panel (line 580-679) has a `max-h-[280px]` on the inner div but the outer wrapper has no scroll constraint, so it still pushes content.
 
-#### 1. Fix Modules Section -- Replace "Leads" with "Deals"
+3. **Stakeholders section grows unbounded**: The `StakeholdersSection` component has no max-height. When the Notes panel is open with many notes, it consumes all vertical space, squishing the Updates and Action Items sections to near-zero height.
 
-**File: `src/components/settings/account/NotificationsSection.tsx`**
-- Change `leads_notifications` label from "Leads" to "Deals"
-- Reorder: Accounts, Contacts, Deals
-- Add `deals_notifications` concept mapped to existing `leads_notifications` DB column (reuse column, just relabel)
-  - Note: We reuse the existing `leads_notifications` column to avoid a migration. The column name is internal; the UI label is what matters.
+### Changes (single file: `src/components/DealExpandedPanel.tsx`)
 
-#### 2. Remove Dead Event Toggles, Rename Others
+#### Fix 1: Bullet cursor positioning (line 628-634)
 
-**Events section changes:**
-- Remove "Lead Assigned" (`lead_assigned`) -- Leads module removed, and no backend checks this
-- Remove "Meeting Reminders" (`meeting_reminders`) -- No meeting system exists
-- Remove "Weekly Digest" (`weekly_digest`) -- No backend implementation
-- Keep "Deal Updates" (`deal_updates`) -- `create_deal_notification` trigger exists
-- Keep "Action Reminders" (`task_reminders`) -- `daily-action-reminders` edge function checks this
-- Add "Contact Updates" -- map to `contacts_notifications` (already exists), shown as event
+Replace `autoFocus` on the Textarea with a `ref` callback that focuses the element AND places the cursor at the end of the text (after `"• "`):
 
-Simplified events: **Deal Stage Changes**, **Action Item Reminders**
-
-#### 3. Add Push Notifications Toggle (or Remove)
-
-Since there's no push notification infrastructure, remove `push_notifications` from the interface entirely. Keep the DB column for future use but don't expose a non-functional toggle.
-
-#### 4. Add Save Feedback
-
-- Show a subtle toast or inline "Saved" indicator when auto-save completes successfully
-- Add a brief checkmark animation or text near the section header
-
-#### 5. Redesigned Layout
-
-Replace the current flat grid with a cleaner grouped layout:
-
-```text
-DELIVERY CHANNELS
-┌─────────────────────────────────────────────┐
-│ Email Notifications    [toggle]             │
-│ In-App Notifications   [toggle]             │
-│ Frequency  [Instant ▾]  Reminder [7:00 AM ▾]│
-└─────────────────────────────────────────────┘
-
-NOTIFY ME ABOUT
-┌─────────────────────────────────────────────┐
-│ Deal Stage Changes     [toggle]             │
-│ Action Item Reminders  [toggle]             │
-│ Account Updates        [toggle]             │
-│ Contact Updates        [toggle]             │
-└─────────────────────────────────────────────┘
+```tsx
+<Textarea
+  value={noteText}
+  onChange={(e) => setNoteText(e.target.value)}
+  onKeyDown={handleNoteKeyDown}
+  className="min-h-[100px] text-xs resize-none"
+  ref={(el) => {
+    if (el) {
+      el.focus();
+      const len = el.value.length;
+      el.selectionStart = len;
+      el.selectionEnd = len;
+    }
+  }}
+/>
 ```
 
-This merges the confusing "Modules" and "Events" sections into a single "Notify Me About" section since the distinction was unclear and most toggles were non-functional.
+#### Fix 2: Constrain Stakeholders section height
 
-### Files to Modify
+Wrap the StakeholdersSection output in a container with `max-h` and `overflow-y-auto` so it scrolls when content is large. Change the outer div (line 462) from:
 
-- `src/components/settings/account/NotificationsSection.tsx` -- Complete rewrite of layout and toggle list
-- `src/components/settings/AccountSettingsPage.tsx` -- Simplify `NotificationPrefs` interface, remove dead fields from state
-
-### Technical Details
-
-**Interface simplification:**
-```typescript
-interface NotificationPrefs {
-  email_notifications: boolean;
-  in_app_notifications: boolean;
-  push_notifications: boolean;      // kept for DB compat, not shown
-  deal_updates: boolean;
-  task_reminders: boolean;
-  notification_frequency: string;
-  leads_notifications: boolean;      // reused as "Deals" toggle
-  contacts_notifications: boolean;
-  accounts_notifications: boolean;
-  daily_reminder_time: string;
-  // Remove from UI (keep in DB): lead_assigned, meeting_reminders, weekly_digest
-}
+```tsx
+<div className="px-3 pt-1.5 pb-1">
 ```
 
-**Save function still writes all fields** to avoid nullifying existing DB values. We just stop rendering the dead toggles.
+to:
 
-**No database migration needed** -- we're only changing UI labels and hiding unused toggles. The DB columns remain for backward compatibility.
+```tsx
+<div className="px-3 pt-1.5 pb-1 max-h-[45%] overflow-y-auto shrink-0">
+```
+
+However, since this is not inside a flex parent that uses percentage heights well, a better approach is to change the parent layout. The parent (line 1182) is:
+
+```tsx
+<div className="flex-1 min-h-0 flex flex-col overflow-hidden gap-1">
+```
+
+The fix: Make the StakeholdersSection a flex item that can shrink, and give it a max-height so it doesn't dominate. Change line 1184 from:
+
+```tsx
+<StakeholdersSection deal={deal} queryClient={queryClient} />
+```
+
+to wrap it in a constrained container:
+
+```tsx
+<div className="shrink-0 max-h-[40%] overflow-y-auto">
+  <StakeholdersSection deal={deal} queryClient={queryClient} />
+</div>
+```
+
+This ensures:
+- Stakeholders section gets at most 40% of the panel height
+- When content exceeds that, a scrollbar appears
+- Updates and Action Items always get their fair share of space
+
+#### Fix 3: Ensure notes panel scrolls properly
+
+The notes summary panel (line 596) already has `max-h-[280px] overflow-y-auto`, but when inside the constrained container from Fix 2, this works correctly. No additional change needed here -- the outer scroll from Fix 2 handles it.
+
+### Summary
+
+| Change | Line(s) | Description |
+|--------|---------|-------------|
+| Replace `autoFocus` with ref callback | 628-634 | Cursor placed after bullet on open |
+| Wrap StakeholdersSection in scrollable container | 1184 | Max 40% height with scrollbar |
+
+### Technical Notes
+
+- The ref callback fires on every render, but since `el.focus()` is idempotent when already focused, this is harmless
+- The `max-h-[40%]` works because the parent has `flex-1 min-h-0` which resolves to an actual pixel height
+- Updates and Action Items sections keep their `flex-1 min-h-0` with `h-[220px]`, ensuring they share remaining space equally
 
