@@ -101,8 +101,8 @@ const NotificationsSection = ({ notificationPrefs, setNotificationPrefs, userId,
           )}
           {saveStatus === 'saved' && (
             <>
-              <Check className="h-3.5 w-3.5 text-emerald-500" />
-              <span className="text-emerald-600 dark:text-emerald-400">Saved</span>
+            <Check className="h-3.5 w-3.5 text-primary" />
+              <span className="text-primary">Saved</span>
             </>
           )}
         </div>
