@@ -11,8 +11,7 @@ import { format } from "date-fns";
 import { toast } from "sonner";
 import { CampaignModal } from "@/components/campaigns/CampaignModal";
 import { CampaignMARTStrategy } from "@/components/campaigns/CampaignMARTStrategy";
-import { CampaignAccounts } from "@/components/campaigns/CampaignAccounts";
-import { CampaignContacts } from "@/components/campaigns/CampaignContacts";
+import { CampaignAccountsContacts } from "@/components/campaigns/CampaignAccountsContacts";
 import { CampaignCommunications } from "@/components/campaigns/CampaignCommunications";
 import { CampaignAnalytics } from "@/components/campaigns/CampaignAnalytics";
 import { CampaignActionItems } from "@/components/campaigns/CampaignActionItems";
@@ -232,11 +231,10 @@ export default function CampaignDetail() {
       <div className="flex-1 overflow-hidden px-6 pt-4 pb-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
           <div className="overflow-x-auto">
-            <TabsList className="w-full grid grid-cols-7">
+            <TabsList className="w-full grid grid-cols-6">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="mart">MART Strategy</TabsTrigger>
-              <TabsTrigger value="accounts">Accounts</TabsTrigger>
-              <TabsTrigger value="contacts">Contacts</TabsTrigger>
+              <TabsTrigger value="accounts-contacts">Accounts & Contacts</TabsTrigger>
               <TabsTrigger value="outreach">Outreach</TabsTrigger>
               <TabsTrigger value="tasks">Tasks</TabsTrigger>
               <TabsTrigger value="analytics">Analytics</TabsTrigger>
@@ -270,11 +268,8 @@ export default function CampaignDetail() {
               />
             </TabsContent>
 
-            <TabsContent value="accounts" className="mt-0">
-              <CampaignAccounts campaignId={campaign.id} isCampaignEnded={isCampaignEnded} />
-            </TabsContent>
-            <TabsContent value="contacts" className="mt-0">
-              <CampaignContacts campaignId={campaign.id} isCampaignEnded={isCampaignEnded} campaignName={campaign.campaign_name} campaignOwner={campaign.owner} endDate={campaign.end_date} />
+            <TabsContent value="accounts-contacts" className="mt-0">
+              <CampaignAccountsContacts campaignId={campaign.id} isCampaignEnded={isCampaignEnded} campaignName={campaign.campaign_name} campaignOwner={campaign.owner} endDate={campaign.end_date} />
             </TabsContent>
             <TabsContent value="outreach" className="mt-0">
               <CampaignCommunications campaignId={campaign.id} isCampaignEnded={isCampaignEnded} />
