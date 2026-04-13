@@ -129,8 +129,8 @@ export function CampaignOverview({
     <div className="space-y-4">
       {/* All 8 stats in one row */}
       <div className="grid grid-cols-4 xl:grid-cols-8 gap-3">
-        <StatCard label="Accounts" value={accounts.length} icon={Building2} onClick={() => onTabChange("accounts")} />
-        <StatCard label="Contacts" value={contacts.length} icon={Users} onClick={() => onTabChange("contacts")} />
+        <StatCard label="Accounts" value={accounts.length} icon={Building2} onClick={() => onTabChange("accounts-contacts")} />
+        <StatCard label="Contacts" value={contacts.length} icon={Users} onClick={() => onTabChange("accounts-contacts")} />
         <StatCard label="Emails" value={emailCount} icon={MessageSquare} onClick={() => onTabChange("outreach")} />
         <StatCard label="Calls" value={callCount} icon={Phone} onClick={() => onTabChange("outreach")} />
         <StatCard label="LinkedIn" value={linkedinCount} icon={Linkedin} onClick={() => onTabChange("outreach")} />
@@ -143,7 +143,7 @@ export function CampaignOverview({
         {/* Contact Stage Funnel */}
         <Card>
           <CardHeader className="py-3">
-            <CardTitle className="text-sm flex items-center gap-2 cursor-pointer hover:text-primary transition-colors" onClick={() => onTabChange("contacts")}>
+            <CardTitle className="text-sm flex items-center gap-2 cursor-pointer hover:text-primary transition-colors" onClick={() => onTabChange("accounts-contacts")}>
               <Users className="h-4 w-4" /> Contact Funnel <ArrowRight className="h-3 w-3 ml-auto" />
             </CardTitle>
           </CardHeader>
