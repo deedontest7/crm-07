@@ -48,13 +48,12 @@ export function CampaignMARTRegion({ campaign }: Props) {
 
   const filteredTimezones = useMemo(() => {
     if (form.country) return getTimezonesForCountry(form.country);
-    return TIMEZONE_LIST;
+    return getFormattedTimezoneList();
   }, [form.country]);
 
   const timezoneLabel = useMemo(() => {
     if (!form.timezone) return "";
-    const tz = TIMEZONE_LIST.find(t => t.value === form.timezone);
-    return tz?.label || form.timezone;
+    return getTimezoneLabel(form.timezone);
   }, [form.timezone]);
 
   const openAdd = () => {
@@ -85,9 +84,9 @@ export function CampaignMARTRegion({ campaign }: Props) {
     if (region) {
       newForm.region = region;
     }
-    // Reset timezone if it's not valid for the new country
+    // Auto-select timezone if only one valid option, or reset if invalid
     const validTzs = getTimezonesForCountry(value);
-    if (newForm.timezone && !validTzs.some(tz => tz.value === newForm.timezone)) {
+    if (!newForm.timezone || !validTzs.some(tz => tz.value === newForm.timezone)) {
       newForm.timezone = validTzs.length === 1 ? validTzs[0].value : "";
     }
     setForm(newForm);
@@ -119,8 +118,7 @@ export function CampaignMARTRegion({ campaign }: Props) {
   };
 
   const getTimezoneDisplay = (tz: string) => {
-    const found = TIMEZONE_LIST.find(t => t.value === tz);
-    return found?.label || tz.replace(/_/g, " ");
+    return getTimezoneLabel(tz);
   };
 
   return (
