@@ -1,46 +1,52 @@
 
 
-## Expand Region Targeting: All Regions, All Countries, Formatted Timezones
+## Fix Timezone Display and Auto-Selection
+
+### Problem 1: Incorrect UTC Offsets
+The timezone labels are hardcoded with **standard time** offsets (e.g., Germany shows "UTC+01:00 CET") but right now (April 2026) Germany is in **daylight saving time** and should show "UTC+02:00 CEST". This affects all countries that observe DST -- most of Europe, North America, Australia, etc.
+
+**Fix**: Compute timezone labels dynamically at runtime using JavaScript's `Intl.DateTimeFormat` API. This automatically reflects the current DST state.
+
+### Problem 2: Auto-Select Not Triggering
+When selecting a country with only one timezone (e.g., Germany), the timezone should auto-fill. Currently the auto-select code only runs when the existing timezone is *invalid* for the new country -- it skips auto-selection when no timezone was previously set.
+
+**Fix**: Also auto-select when the timezone field is empty and there's exactly one option.
 
 ### Changes
 
-#### 1. Expand `src/utils/countryRegionMapping.ts`
+#### File: `src/utils/countryRegionMapping.ts`
+- Replace static `TIMEZONE_LIST` labels with a helper function `getTimezoneLabel(ianaName)` that computes the current UTC offset and abbreviation dynamically using `Intl.DateTimeFormat`
+- Keep the `value` (IANA identifier) unchanged
+- Add a `getFormattedTimezoneList()` function that returns the list with current-correct labels
+- Update `getTimezonesForCountry()` to use dynamic labels
 
-**Regions**: Expand from 4 to 7 proper geographic regions:
-`Africa`, `Asia`, `Europe`, `Middle East`, `North America`, `Oceania`, `South America`
+#### File: `src/components/campaigns/CampaignMARTRegion.tsx`
+- Use `getFormattedTimezoneList()` and updated `getTimezonesForCountry()` for dropdown options
+- Fix `handleCountryChange`: when `!newForm.timezone && validTzs.length === 1`, auto-set timezone
+- Fix `getTimezoneDisplay()` to use dynamic label computation
 
-**Countries**: Add all ~200 UN-recognized countries, each mapped to its region. Alphabetically sorted within each region.
+### Technical Detail
 
-**Aliases**: Expand to cover common variants for the new countries.
-
-#### 2. Add timezone data with display format
-
-Create a `TIMEZONE_LIST` array in a new section of `countryRegionMapping.ts` (or inline in the component) with entries formatted as shown in the user's screenshot:
-
+Dynamic label generation:
+```typescript
+function getTimezoneLabel(iana: string): string {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: iana,
+    timeZoneName: "shortOffset"  // e.g. "GMT+2"
+  });
+  // Extract offset, convert to "UTC+02:00" format
+  // Get long name via "long" option
+  // Return "UTC+02:00 Central European Summer Time (CEST)"
+}
 ```
-UTC+05:30 Indian Standard Time (IST)
-UTC-05:00 Eastern Standard Time (EST)
-UTC+00:00 Greenwich Mean Time (GMT)
-UTC+01:00 Central European Time (CET)
-...
-```
 
-Each entry: `{ value: "Asia/Kolkata", label: "UTC+05:30 Indian Standard Time (IST)" }`
-
-Cover ~40 major timezone entries covering all UTC offsets from -12 to +14.
-
-#### 3. Update `src/components/campaigns/CampaignMARTRegion.tsx`
-
-- **Reorder fields** to: Region (1st) → Country (2nd) → Timezone (3rd)
-- **Region**: `Select` dropdown with all 7 regions
-- **Country**: `Select` dropdown filtered by selected region; auto-sets region when country is picked; resets country when region changes if mismatch
-- **Timezone**: `Select` dropdown using the new formatted labels (e.g., "UTC+05:30 Indian Standard Time (IST)") instead of raw IANA identifiers
-- **Validation**: Require region (not country) as minimum to save
+This ensures Germany shows `UTC+02:00` during summer and `UTC+01:00` during winter, automatically.
 
 ### Files Modified
 
-| File | What |
-|------|------|
-| `src/utils/countryRegionMapping.ts` | Expand to 7 regions, ~200 countries, formatted timezone list |
-| `src/components/campaigns/CampaignMARTRegion.tsx` | Reorder to Region→Country→Timezone, all dropdowns, filtered country list, formatted timezone display |
+| File | Change |
+|------|--------|
+| `src/utils/countryRegionMapping.ts` | Dynamic timezone label generation replacing static labels |
+| `src/components/campaigns/CampaignMARTRegion.tsx` | Auto-select single timezone, use dynamic labels |
 
