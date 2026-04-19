@@ -1,80 +1,133 @@
 
 
-## Simplify Create Campaign Modal
+## Setup Section — UX, Logic & AI Workflow Overhaul
 
-### Issues found in current modal
-1. **Tags field** — user wants removed (rarely used, clutters form)
-2. **Priority field too wide** — full-width select for a 3-option enum wastes space
-3. **Section labels redundant** — "Basics", "Schedule", "Reach", "Details" add visual noise for a small form
-4. **Type dropdown shows description sub-text** — makes options tall and noisy
-5. **Goal field placement** — paired oddly with Primary Channel; goal is more of a detail than a reach setting
-6. **Description textarea** — 3 rows + own section for an optional field
-7. **Owner defaults to current user but still shown as required selector** — most users only ever pick themselves
-8. **Status field in edit mode** — shown disabled with helper text taking 2 lines (clutter)
-9. **Tag helper text** — "Up to 10 tags. Use Enter or comma to add." (will be removed with tags)
-10. **Modal vertical density** — lots of `space-y` and section gaps make it feel longer than needed
+Four independent improvements across the Setup tab (Region / Audience / Message / Timing). Each is described separately so you can see what changes where.
 
-### New compact layout
+---
+
+### 1. Section Header Sizing + Audience Toolbar Layout
+
+**File: `src/components/campaigns/CampaignStrategy.tsx`**
+
+- Increase header padding from `py-2 px-3` → `py-3 px-4`, bump title text from `text-sm` → `text-[15px]`, and increase the icon and check-circle sizes (`h-4 w-4` → `h-[18px] w-[18px]` for content icons, `h-5` → `h-6` for the check). This gives all four headers the same comfortable industry-standard touch height (~52px).
+- Make the section background slightly more pronounced and the meta summary text (`getContentSummary`) one size larger so it reads as a real subtitle.
+
+**File: `src/components/campaigns/CampaignAudienceTable.tsx` (toolbar)**
+
+Reorder the toolbar so it reads left-to-right as a single visual flow:
 
 ```text
-┌─ Create Campaign ──────────────────────────┐
-│ Name *                                      │
-│ [____________________________________]      │
-│                                             │
-│ Type *              Priority                │
-│ [New Outreach ▾]    [● Medium ▾] (compact) │
-│                                             │
-│ Owner *             Channel                 │
-│ [Deepak ▾]          [Email ▾]               │
-│                                             │
-│ Start *             End *                   │
-│ [date]              [date]                  │
-│                                             │
-│ Goal (optional)                             │
-│ [e.g. 50 demos booked_______________]       │
-│                                             │
-│ Description (optional)                      │
-│ [_________________________________]  2 rows │
-│                                             │
-│              [Cancel]  [Create]             │
-└─────────────────────────────────────────────┘
+[🔍 Search accounts & contacts…]   0 accounts · 0 contacts        [Expand all] [+ Accounts] [+ Contacts]
 ```
 
-### Specific changes to `CampaignModal.tsx`
+- Search bar moves to the left (first element).
+- The `0 accounts · 0 contacts` count moves immediately right of the search.
+- Expand/Add buttons stay on the right.
 
-**Remove:**
-- All `<SectionLabel>` headings + the component definition
-- Tags field (chips input + helper text + state: `tagInput`, `addTagFromInput`, `removeTag`, `handleTagKeyDown`)
-- `tags` from form state and submit payload
-- Type option `description` sub-text in dropdown items (keep just the label — cleaner)
-- Status read-only field + helper text in edit mode (status belongs in header; no need to show here at all)
-- Helper paragraph under tags
+---
 
-**Restructure into 5 compact rows:**
-1. Name (full width)
-2. Type + Priority (50/50) — Priority becomes a compact select with just colored dot + label
-3. Owner + Primary Channel (50/50) — moves Channel up next to Owner
-4. Start Date + End Date (50/50)
-5. Goal (full width, single input)
-6. Description (full width, 2 rows instead of 3)
+### 2. Add-Accounts Modal — Filter by Selected Countries
 
-**Tighten spacing:**
-- `gap-3` → `gap-2.5` between rows
-- Remove `mt-1` on section labels (no longer exist)
-- Reduce `py-2` padding on grid container
-- Modal stays `sm:max-w-[520px]` (slightly narrower since less content)
+**Bug:** When Region = Europe and Country = Austria, the modal still lists Germany, France, UK etc. Currently `AddAccountsModal` only filters by `region` codes; it ignores the selected country list from the region cards.
 
-**Priority compact rendering:**
-- Trigger shows: `● Medium` (dot + word, no extra padding)
-- Same width as Type select beside it (50% column)
+**Fix in `src/components/campaigns/CampaignAudienceTable.tsx`:**
+- Pass the campaign's region cards (with their `country` values) down to `AddAccountsModal` as a new prop `selectedCountries: string[]` derived from `parseRegions(campaign)`.
 
-### Files to modify
+**Fix in `src/components/campaigns/AddAccountsModal.tsx`:**
+- Add a `selectedCountries?: string[]` prop.
+- In the `all-accounts` query, when `selectedCountries.length > 0`, add `.in("country", selectedCountries)` (using `normalizeCountryName` mapping to handle DB variants).
+- If no countries are picked but regions are, keep current region-only filter.
+- Result: Only Austrian accounts appear when Austria is the only chosen country; if user later adds Germany too, both appear.
+
+We will also pipe the same `selectedCountries` into `AddContactsModal` so contacts are filtered to those countries' company names.
+
+---
+
+### 3. Message Section — AI Workflow + Context-Aware Templates + Attachments
+
+This is the largest change. The current "Generate with AI" button lives inside each individual modal (Email / Script / LinkedIn) and requires the user to first open the right modal. We replace that with a single AI-first entry point.
+
+#### 3a. Remove "Assign to Segments" everywhere
+- Email modal: delete the `<Label>Assign to Segments</Label>` block + the `audience_segment` form field handling (still write `null` to DB to keep schema happy).
+- Phone-script modal: delete the `<Label>Audience Segments</Label>` block.
+- Card displays: stop rendering `segs` badges.
+- Helper functions `toggleSegment`, `toggleScriptSegment`, and the `SEGMENTS` constant get removed.
+
+#### 3b. New "Generate with AI" entry point
+At the top of the Message section, add a single primary button:
+
+```text
+[ ✨ Generate with AI ]
+```
+
+Clicking opens a small wizard dialog:
+
+```text
+┌─ Generate with AI ─────────────────────────────────┐
+│                                                    │
+│  What do you want to create?                       │
+│  [✓ Email]   [ ] LinkedIn Connection               │
+│  [ ] LinkedIn Follow-up   [ ] Call Script          │
+│  (multi-select — picks all checked outputs)        │
+│                                                    │
+│  Briefly describe the context / angle              │
+│  ┌────────────────────────────────────────────┐    │
+│  │ e.g. "Introduce our new SaaS analytics     │    │
+│  │ platform for mid-market manufacturers in   │    │
+│  │ Europe. Focus on cost savings."            │    │
+│  └────────────────────────────────────────────┘    │
+│  Tone: [Professional ▾]   Length: [Short ▾]        │
+│                                                    │
+│             [Cancel]   [✨ Generate & Save]         │
+└────────────────────────────────────────────────────┘
+```
+
+**On Generate & Save:**
+- Calls existing `generate-campaign-template` edge function once per checked type, passing the user's context text as `userInstructions`, plus existing `campaignContext` (campaign name, type, goal, regions, **selected countries**, audience counts, sample industries, sample positions).
+- For each successful response, **creates a saved template directly** (no extra modal) with auto-name like `"AI – Email – {first 30 chars of context}"`.
+- Toast: "Generated and saved 3 templates" then refreshes the list.
+
+The per-modal "Generate with AI" buttons are removed (they didn't have campaign context anyway and produced generic text — root cause of the issue you described).
+
+#### 3c. Variable substitution + auto-prefill on send
+
+The `EmailComposeModal` already supports `{contact_name}`, `{first_name}`, `{company_name}`, `{position}`, `{email}`. We extend the AI system prompt in `generate-campaign-template/index.ts` to **always include these variables** in the generated body so when the user later opens the compose modal and selects a contact, fields auto-populate. We add 3 more variables and document them in the wizard:
+
+- `{region}` – contact's region
+- `{country}` – contact's country
+- `{owner_name}` – campaign owner's name
+
+`substituteVariables` in `EmailComposeModal.tsx` is extended to look these up from `selectedContact.contacts` (region/country) and from the campaign owner name (passed in as a prop).
+
+#### 3d. Materials upload — verify + email attachments
+
+**Verify upload works:** The current code uses `supabase.storage.from("campaign-materials").upload(...)` which requires the storage bucket to exist. We will check + create a migration if missing (read-only mode can't run it; will be applied after approval). The bucket should be `campaign-materials` with private access + RLS allowing campaign members to read.
+
+**Add attachments to Email Compose:**
+- In `EmailComposeModal.tsx`, fetch `campaign_materials` for the campaign.
+- New section under Body: "Attachments" with checkboxes for each uploaded material; selected file paths are sent to `send-campaign-email`.
+- Update `send-campaign-email/index.ts` to accept `attachments: { file_path: string; file_name: string }[]`, download each from storage with a service-role client, and pass them to Microsoft Graph's `sendMail` payload as `message.attachments` (`@odata.type: "#microsoft.graph.fileAttachment"`, `contentBytes` base64).
+- Cap total attachment size at ~10 MB (Graph limit per message) with a clear toast if exceeded.
+
+---
+
+### 4. Files Modified
+
 | File | Change |
 |------|--------|
-| `src/components/campaigns/CampaignModal.tsx` | Rewrite layout: remove tags/sections/status field, regroup fields into compact rows, simplify type dropdown, tighten spacing |
+| `src/components/campaigns/CampaignStrategy.tsx` | Larger header padding/text/icons |
+| `src/components/campaigns/CampaignAudienceTable.tsx` | Toolbar reorder; pass `selectedCountries` to add modals |
+| `src/components/campaigns/AddAccountsModal.tsx` | Filter accounts by `selectedCountries` |
+| `src/components/campaigns/AddContactsModal.tsx` | Filter contacts by `selectedCountries` |
+| `src/components/campaigns/CampaignMessage.tsx` | Remove segments UI + per-modal AI buttons; add top-level "Generate with AI" wizard; auto-save AI templates; render attachment selector hookup |
+| `src/components/campaigns/EmailComposeModal.tsx` | Add attachment selector + new variable substitutions; accept owner name |
+| `supabase/functions/generate-campaign-template/index.ts` | Accept `selectedCountries`, sample industries/positions; system prompt mandates `{first_name}/{company_name}/{position}/{country}/{region}` placeholders |
+| `supabase/functions/send-campaign-email/index.ts` | Accept `attachments[]`, fetch from storage, attach to Graph sendMail; surface size errors |
+| `supabase/migrations/<new>.sql` (if missing) | Ensure `campaign-materials` storage bucket + RLS policies |
 
-### Out of scope
-- Removing fields from DB (tags column stays for backward compat)
-- Changing `useCampaigns` hook (still accepts `tags` optionally; we just send `[]` or omit)
-- Editing other modals
+### Out of Scope
+- Changing DB schema for templates (keep `audience_segment` column nullable, just stop writing/reading it from UI).
+- Touching the unused `CampaignMART*` files (separate cleanup).
+- Outreach tab — only Setup tab is in scope.
 
