@@ -1,10 +1,15 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { getAzureEmailConfig, getGraphAccessToken, sendEmailViaGraph } from "../_shared/azure-email.ts";
+import { getAzureEmailConfig, getGraphAccessToken, sendEmailViaGraph, type GraphAttachment } from "../_shared/azure-email.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+interface AttachmentInput {
+  file_path: string;
+  file_name: string;
+}
 
 interface EmailRequest {
   campaign_id: string;
@@ -18,18 +23,70 @@ interface EmailRequest {
   parent_id?: string;
   thread_id?: string;
   parent_internet_message_id?: string;
+  attachments?: AttachmentInput[];
 }
 
-/**
- * Convert plain text body to HTML-safe body.
- * If the body already contains HTML tags, leave it as-is.
- * Otherwise, convert newlines to <br> tags.
- */
+const MAX_TOTAL_ATTACHMENT_BYTES = 9 * 1024 * 1024; // ~9MB safe ceiling under Graph 10MB
+
 function ensureHtmlBody(body: string): string {
-  if (/<[a-z][\s\S]*>/i.test(body)) {
-    return body;
-  }
+  if (/<[a-z][\s\S]*>/i.test(body)) return body;
   return body.replace(/\n/g, '<br>');
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function inferContentType(fileName: string): string {
+  const ext = fileName.split(".").pop()?.toLowerCase() || "";
+  const map: Record<string, string> = {
+    pdf: "application/pdf",
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ppt: "application/vnd.ms-powerpoint",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+    txt: "text/plain", csv: "text/csv",
+  };
+  return map[ext] || "application/octet-stream";
+}
+
+async function buildAttachments(
+  supabaseClient: any,
+  inputs: AttachmentInput[] | undefined,
+): Promise<{ attachments: GraphAttachment[]; error?: string }> {
+  if (!inputs || inputs.length === 0) return { attachments: [] };
+
+  const out: GraphAttachment[] = [];
+  let totalBytes = 0;
+
+  for (const a of inputs) {
+    const { data, error } = await supabaseClient.storage
+      .from("campaign-materials")
+      .download(a.file_path);
+    if (error || !data) {
+      return { attachments: [], error: `Failed to load attachment "${a.file_name}": ${error?.message || "not found"}` };
+    }
+    const buf = await data.arrayBuffer();
+    totalBytes += buf.byteLength;
+    if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+      return { attachments: [], error: `Attachments exceed 9 MB total size limit. Remove some files and try again.` };
+    }
+    out.push({
+      name: a.file_name,
+      contentBytesBase64: arrayBufferToBase64(buf),
+      contentType: inferContentType(a.file_name),
+    });
+  }
+  return { attachments: out };
 }
 
 async function resolveSenderEmail(supabaseClient: any, user: { id: string; email?: string | null }) {
@@ -41,7 +98,6 @@ async function resolveSenderEmail(supabaseClient: any, user: { id: string; email
 
   const profileEmail = profile?.["Email ID"]?.trim();
   const authEmail = user.email?.trim();
-
   return profileEmail || authEmail || null;
 }
 
@@ -61,7 +117,6 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("MY_SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("MY_SUPABASE_SERVICE_ROLE_KEY")!;
-    
     const supabaseClient = createClient(supabaseUrl, serviceRoleKey);
     const token = authHeader.replace("Bearer ", "");
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
@@ -82,7 +137,6 @@ Deno.serve(async (req) => {
 
     const azureConfig = getAzureEmailConfig();
     if (!azureConfig) {
-      console.error("Azure email credentials not configured");
       return new Response(JSON.stringify({
         success: false,
         error: "Email sending is not configured. Please ask your administrator to set up Azure email credentials.",
@@ -106,7 +160,7 @@ Deno.serve(async (req) => {
     }
 
     const mailboxEmail = azureConfig.senderEmail;
-    console.log(`Sending campaign email from user mailbox: ${senderEmail} (shared mailbox configured: ${mailboxEmail})`);
+    console.log(`Sending campaign email from user mailbox: ${senderEmail} (shared mailbox: ${mailboxEmail})`);
 
     let accessToken: string;
     try {
@@ -134,19 +188,6 @@ Deno.serve(async (req) => {
         communication_date: new Date().toISOString(),
       });
 
-      await supabaseClient.from("email_history").insert({
-        subject: payload.subject,
-        body: payload.body,
-        recipient_email: payload.recipient_email,
-        recipient_name: payload.recipient_name,
-        sender_email: senderEmail,
-        sent_by: user.id,
-        contact_id: payload.contact_id,
-        account_id: payload.account_id || null,
-        status: "failed",
-        sent_at: new Date().toISOString(),
-      });
-
       return new Response(JSON.stringify({
         success: false,
         error: `Failed to authenticate with email provider: ${errMsg}`,
@@ -157,25 +198,34 @@ Deno.serve(async (req) => {
       });
     }
 
-    // If this is a reply, look up the parent's internet_message_id for threading
+    // Build attachments (returns early on error)
+    const { attachments, error: attachError } = await buildAttachments(supabaseClient, payload.attachments);
+    if (attachError) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: attachError,
+        errorCode: "ATTACHMENT_ERROR",
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // If reply, lookup parent metadata
     let replyToInternetMessageId: string | undefined;
     let fallbackConversationId: string | null = null;
     if (payload.parent_id) {
-      // Use explicitly passed parent_internet_message_id first
       if (payload.parent_internet_message_id) {
         replyToInternetMessageId = payload.parent_internet_message_id;
       }
-
       const { data: parentComm } = await supabaseClient
         .from("campaign_communications")
         .select("internet_message_id, conversation_id")
         .eq("id", payload.parent_id)
         .single();
-
       if (!replyToInternetMessageId && parentComm?.internet_message_id) {
-          replyToInternetMessageId = parentComm.internet_message_id;
+        replyToInternetMessageId = parentComm.internet_message_id;
       }
-
       if (parentComm?.conversation_id) {
         fallbackConversationId = parentComm.conversation_id;
       }
@@ -192,6 +242,7 @@ Deno.serve(async (req) => {
       htmlBody,
       senderEmail,
       replyToInternetMessageId,
+      attachments,
     );
 
     const deliveryStatus = result.success ? "sent" : "failed";
