@@ -159,10 +159,12 @@ export function CampaignModal({ open, onClose, campaign, onCreated }: CampaignMo
               <Label className="text-xs font-medium">Priority</Label>
               <Select value={formData.priority} onValueChange={(v) => setFormData({ ...formData, priority: v })}>
                 <SelectTrigger className="h-9">
-                  <div className="flex items-center gap-2">
-                    <span className={`h-2 w-2 rounded-full ${priorityDot}`} />
-                    <SelectValue />
-                  </div>
+                  <SelectValue>
+                    <div className="flex items-center gap-2">
+                      <span className={`h-2 w-2 rounded-full ${priorityDot}`} />
+                      <span>{formData.priority}</span>
+                    </div>
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {PRIORITY_OPTIONS.map((p) => (
