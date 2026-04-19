@@ -25,6 +25,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { useUserDisplayNames } from "@/hooks/useUserDisplayNames";
+import { expandRegionsForDb } from "@/utils/countryRegionMapping";
 
 interface Props {
   campaignId: string;
@@ -32,6 +33,8 @@ interface Props {
   campaignName?: string;
   campaignOwner?: string | null;
   endDate?: string | null;
+  compact?: boolean;
+  selectedRegions?: string[];
 }
 
 const statusColors: Record<string, string> = {
@@ -58,26 +61,11 @@ const linkedinStatusColors: Record<string, string> = {
   "Responded": "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
 };
 
-const stageRanks: Record<string, number> = {
-  "Not Contacted": 0, "Email Sent": 1, "Phone Contacted": 2,
-  "LinkedIn Contacted": 3, "Responded": 4, "Qualified": 5,
-};
+import { stageRanks, deriveAccountStatus, recomputeAccountStatus } from "./campaignUtils";
 
-function deriveAccountStatus(contacts: any[], accountId: string): string {
+function deriveAccountStatusForAccount(contacts: any[], accountId: string): string {
   const acContacts = contacts.filter((c: any) => c.account_id === accountId);
-  if (acContacts.length === 0) return "Not Contacted";
-  if (acContacts.some((c: any) => c.stage === "Qualified")) return "Deal Created";
-  if (acContacts.some((c: any) => c.stage === "Responded")) return "Responded";
-  if (acContacts.some((c: any) => c.stage !== "Not Contacted")) return "Contacted";
-  return "Not Contacted";
-}
-
-async function recomputeAccountStatus(campaignId: string, accountId: string, queryClient: any) {
-  const { data: contacts } = await supabase.from("campaign_contacts")
-    .select("stage").eq("campaign_id", campaignId).eq("account_id", accountId);
-  const status = deriveAccountStatus(contacts || [], accountId);
-  await supabase.from("campaign_accounts").update({ status }).eq("campaign_id", campaignId).eq("account_id", accountId);
-  queryClient.invalidateQueries({ queryKey: ["campaign-accounts", campaignId] });
+  return deriveAccountStatus(acContacts);
 }
 
 /** Fetch all records from contacts table using paginated batches */
@@ -98,7 +86,7 @@ async function fetchAllContacts() {
   return allData;
 }
 
-export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaignName, campaignOwner, endDate }: Props) {
+export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaignName, campaignOwner, endDate, compact = false, selectedRegions = [] }: Props) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -112,6 +100,8 @@ export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaign
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [removeConfirm, setRemoveConfirm] = useState<{ type: "account" | "contact"; id: string; name: string } | null>(null);
+  const [selectedContactIdsForAccounts, setSelectedContactIdsForAccounts] = useState<string[]>([]);
+  const [expandedModalAccounts, setExpandedModalAccounts] = useState<Set<string>>(new Set());
 
   // Slide-over states
   const [emailSlideOpen, setEmailSlideOpen] = useState(false);
@@ -195,22 +185,24 @@ export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaign
     },
   });
 
-  // All accounts for add modal
+  // All accounts for add modal — server-side filter by selectedRegions when provided
   const { data: allAccounts = [] } = useQuery({
-    queryKey: ["all-accounts"],
+    queryKey: ["all-accounts", selectedRegions.join(",")],
     queryFn: async () => {
-      const { data, error } = await supabase.from("accounts").select("id, account_name, industry, region, country");
+      let q = supabase.from("accounts").select("id, account_name, industry, region, country");
+      if (selectedRegions.length > 0) q = q.in("region", expandRegionsForDb(selectedRegions));
+      const { data, error } = await q;
       if (error) throw error;
       return data;
     },
     enabled: addAccountModalOpen,
   });
 
-  // All contacts - paginated fetch
+  // All contacts - paginated fetch (filter client-side by linked-account region after fetch)
   const { data: allContacts = [] } = useQuery({
     queryKey: ["all-contacts-paginated"],
     queryFn: fetchAllContacts,
-    enabled: addContactModalOpen,
+    enabled: addContactModalOpen || addAccountModalOpen,
   });
 
   // Users for deal owner
@@ -245,7 +237,7 @@ export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaign
 
   // ─── Account actions ───
   const filteredAccounts = campaignAccounts.filter((ca: any) => {
-    const derived = deriveAccountStatus(campaignContacts, ca.account_id);
+    const derived = deriveAccountStatusForAccount(campaignContacts, ca.account_id);
     if (statusFilter !== "all" && derived !== statusFilter) return false;
     if (searchTerm) {
       const name = ca.accounts?.account_name?.toLowerCase() || "";
@@ -254,9 +246,40 @@ export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaign
     return true;
   });
 
-  const availableAccounts = allAccounts.filter(
+  const availableAccounts = useMemo(() => allAccounts.filter(
     (a) => !existingAccountIds.includes(a.id) && a.account_name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  ), [allAccounts, existingAccountIds, searchTerm]);
+
+  // Contact counts per account for the Add Accounts modal
+  const contactsByAccountName = useMemo(() => {
+    const map: Record<string, typeof allContacts> = {};
+    for (const c of allContacts) {
+      if (c.company_name) {
+        const key = c.company_name.toLowerCase();
+        if (!map[key]) map[key] = [];
+        map[key].push(c);
+      }
+    }
+    return map;
+  }, [allContacts]);
+
+  const getModalContactsForAccount = (accountName: string) => {
+    return contactsByAccountName[accountName.toLowerCase()] || [];
+  };
+
+  const toggleModalAccountExpand = (accountId: string) => {
+    setExpandedModalAccounts((prev) => {
+      const next = new Set(prev);
+      if (next.has(accountId)) next.delete(accountId); else next.add(accountId);
+      return next;
+    });
+  };
+
+  const toggleContactForAccount = (contactId: string) => {
+    setSelectedContactIdsForAccounts((prev) =>
+      prev.includes(contactId) ? prev.filter((x) => x !== contactId) : [...prev, contactId]
+    );
+  };
 
   const availableContacts = useMemo(() => {
     return allContacts.filter((c) => {
@@ -275,16 +298,42 @@ export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaign
 
   const handleAddAccounts = async () => {
     if (selectedIds.length === 0) return;
-    const inserts = selectedIds.map((account_id) => ({
+    const accountInserts = selectedIds.map((account_id) => ({
       campaign_id: campaignId, account_id, created_by: user!.id, status: "Not Contacted",
     }));
-    const { error } = await supabase.from("campaign_accounts").insert(inserts);
+    const { error } = await supabase.from("campaign_accounts").insert(accountInserts);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+
+    // Also insert selected contacts
+    if (selectedContactIdsForAccounts.length > 0) {
+      const contactInserts = selectedContactIdsForAccounts
+        .filter((cid) => !existingContactIds.includes(cid))
+        .map((contact_id) => {
+          const contact = allContacts.find((c) => c.id === contact_id);
+          let accountId: string | null = null;
+          if (contact?.company_name) {
+            // Match against newly added accounts or existing
+            const matchedNew = allAccounts.find((a) => selectedIds.includes(a.id) && a.account_name.toLowerCase() === contact.company_name!.toLowerCase());
+            const matchedExisting = campaignAccounts.find((ca: any) => ca.accounts?.account_name?.toLowerCase() === contact.company_name!.toLowerCase());
+            accountId = matchedNew?.id || matchedExisting?.account_id || null;
+          }
+          return { campaign_id: campaignId, contact_id, account_id: accountId, created_by: user!.id, stage: "Not Contacted" as const };
+        });
+      if (contactInserts.length > 0) {
+        const { error: cErr } = await supabase.from("campaign_contacts").insert(contactInserts);
+        if (cErr) { toast({ title: "Error adding contacts", description: cErr.message, variant: "destructive" }); }
+      }
+    }
+
     queryClient.invalidateQueries({ queryKey: ["campaign-accounts", campaignId] });
+    queryClient.invalidateQueries({ queryKey: ["campaign-contacts", campaignId] });
     setAddAccountModalOpen(false);
     setSelectedIds([]);
+    setSelectedContactIdsForAccounts([]);
+    setExpandedModalAccounts(new Set());
     setSearchTerm("");
-    toast({ title: `${selectedIds.length} account(s) added` });
+    const contactCount = selectedContactIdsForAccounts.filter((cid) => !existingContactIds.includes(cid)).length;
+    toast({ title: `${selectedIds.length} account(s)${contactCount > 0 ? ` and ${contactCount} contact(s)` : ""} added` });
   };
 
   const handleAddContacts = async () => {
@@ -353,7 +402,7 @@ export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaign
     }
     const regularTemplates = emailTemplates.filter((t) => t.email_type !== "LinkedIn-Connection" && t.email_type !== "LinkedIn-Followup");
     if (regularTemplates.length === 0) {
-      toast({ title: "No templates", description: "Add email templates in MART → Message first.", variant: "destructive" });
+      toast({ title: "No templates", description: "Add email templates in Setup → Message first.", variant: "destructive" });
       return;
     }
     setSlideContact(cc);
@@ -396,21 +445,38 @@ export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaign
 
   const handleSendEmail = async () => {
     if (!slideContact) return;
-    await supabase.from("campaign_communications").insert({
-      campaign_id: campaignId, contact_id: slideContact.contact_id, account_id: slideContact.account_id,
-      communication_type: "Email", subject: emailForm.subject, body: emailForm.body,
-      email_status: "Sent", owner: user!.id, created_by: user!.id,
-      communication_date: new Date().toISOString(),
-    });
-    const currentRank = stageRanks[slideContact.stage || "Not Contacted"] ?? 0;
-    if (1 > currentRank) {
-      await supabase.from("campaign_contacts").update({ stage: "Email Sent" }).eq("campaign_id", campaignId).eq("contact_id", slideContact.contact_id);
+    if (!slideContact.contacts?.email) {
+      toast({ title: "No email address", variant: "destructive" }); return;
     }
-    if (slideContact.account_id) await recomputeAccountStatus(campaignId, slideContact.account_id, queryClient);
-    queryClient.invalidateQueries({ queryKey: ["campaign-contacts", campaignId] });
-    queryClient.invalidateQueries({ queryKey: ["campaign-communications", campaignId] });
-    setEmailSlideOpen(false);
-    toast({ title: `Email sent to ${slideContact.contacts?.contact_name || "contact"}` });
+    try {
+      const { data, error } = await supabase.functions.invoke("send-campaign-email", {
+        body: {
+          campaign_id: campaignId,
+          contact_id: slideContact.contact_id,
+          account_id: slideContact.account_id || undefined,
+          template_id: emailForm.template_id || undefined,
+          subject: emailForm.subject,
+          body: emailForm.body,
+          recipient_email: slideContact.contacts.email,
+          recipient_name: slideContact.contacts.contact_name,
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) {
+        toast({ title: "Email send failed", description: data?.error || "Unknown error", variant: "destructive" }); return;
+      }
+      const currentRank = stageRanks[slideContact.stage || "Not Contacted"] ?? 0;
+      if (1 > currentRank) {
+        await supabase.from("campaign_contacts").update({ stage: "Email Sent" }).eq("campaign_id", campaignId).eq("contact_id", slideContact.contact_id);
+      }
+      if (slideContact.account_id) await recomputeAccountStatus(campaignId, slideContact.account_id, queryClient);
+      queryClient.invalidateQueries({ queryKey: ["campaign-contacts", campaignId] });
+      queryClient.invalidateQueries({ queryKey: ["campaign-communications", campaignId] });
+      setEmailSlideOpen(false);
+      toast({ title: `Email sent to ${slideContact.contacts?.contact_name || "contact"}` });
+    } catch (err: any) {
+      toast({ title: "Error sending email", description: err.message, variant: "destructive" });
+    }
   };
 
   const handleLogCall = async (markResponded?: boolean) => {
@@ -642,7 +708,7 @@ export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaign
                 </TableHeader>
                 <TableBody>
                   {filteredAccounts.map((ca: any) => {
-                    const derived = deriveAccountStatus(campaignContacts, ca.account_id);
+                    const derived = deriveAccountStatusForAccount(campaignContacts, ca.account_id);
                     const accountContacts = getContactsForAccount(ca.account_id);
                     const isExpanded = expandedAccounts.has(ca.account_id);
                     return (
@@ -899,41 +965,110 @@ export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaign
       </AlertDialog>
 
       {/* ─── Add Accounts Modal ─── */}
-      <Dialog open={addAccountModalOpen} onOpenChange={setAddAccountModalOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
+      <Dialog open={addAccountModalOpen} onOpenChange={(open) => {
+        setAddAccountModalOpen(open);
+        if (!open) { setSelectedContactIdsForAccounts([]); setExpandedModalAccounts(new Set()); }
+      }}>
+        <DialogContent className="sm:max-w-[700px] max-h-[80vh] flex flex-col overflow-hidden">
           <DialogHeader><DialogTitle>Add Accounts to Campaign</DialogTitle></DialogHeader>
-          <div className="relative mb-4">
+          <div className="relative mb-2 flex-shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search accounts..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9" />
           </div>
           {availableAccounts.length > 0 && (
-            <div className="flex items-center gap-3 p-2 border-b border-border mb-1 cursor-pointer" onClick={() => handleSelectAll(availableAccounts)}>
+            <div className="flex items-center gap-3 p-2 border-b border-border mb-1 cursor-pointer flex-shrink-0" onClick={() => handleSelectAll(availableAccounts)}>
               <Checkbox checked={selectedIds.length === availableAccounts.length && availableAccounts.length > 0} />
               <span className="text-sm font-medium">Select All ({availableAccounts.length})</span>
             </div>
           )}
-          <div className="max-h-[400px] overflow-y-auto space-y-1">
-            {availableAccounts.map((account) => (
-              <div key={account.id} className="flex items-center gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer" onClick={() => toggleSelect(account.id)}>
-                <Checkbox checked={selectedIds.includes(account.id)} />
-                <div>
-                  <p className="text-sm font-medium">{account.account_name}</p>
-                  <p className="text-xs text-muted-foreground">{[account.industry, account.region].filter(Boolean).join(" • ")}</p>
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {availableAccounts.map((account) => {
+              const accountContacts = getModalContactsForAccount(account.account_name);
+              const contactCount = accountContacts.length;
+              const isExpanded = expandedModalAccounts.has(account.id);
+              const nonExistingContacts = accountContacts.filter((c) => !existingContactIds.includes(c.id));
+              return (
+                <div key={account.id} className="border-b border-border last:border-b-0">
+                  <div className="flex items-center gap-2 p-2 rounded hover:bg-muted/50">
+                    <button
+                      type="button"
+                      className="p-0.5 hover:bg-muted rounded"
+                      onClick={(e) => { e.stopPropagation(); toggleModalAccountExpand(account.id); }}
+                    >
+                      {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                    </button>
+                    <div className="cursor-pointer flex items-center gap-2 flex-1" onClick={() => toggleSelect(account.id)}>
+                      <Checkbox checked={selectedIds.includes(account.id)} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium">{account.account_name}</p>
+                          <Badge variant="secondary" className="text-xs">
+                            <Users className="h-3 w-3 mr-1" />{contactCount} contact{contactCount !== 1 ? "s" : ""}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{[account.industry, account.region].filter(Boolean).join(" • ")}</p>
+                      </div>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="pl-10 pr-2 pb-2 space-y-0.5">
+                      {nonExistingContacts.length === 0 ? (
+                        <p className="text-xs text-muted-foreground italic py-1">
+                          {contactCount === 0 ? "No contacts found" : "All contacts already in campaign"}
+                        </p>
+                      ) : (
+                        nonExistingContacts.map((contact) => (
+                          <div
+                            key={contact.id}
+                            className="flex items-center gap-2 p-1.5 rounded hover:bg-muted/30 cursor-pointer"
+                            onClick={() => toggleContactForAccount(contact.id)}
+                          >
+                            <Checkbox checked={selectedContactIdsForAccounts.includes(contact.id)} />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium">{contact.contact_name}</p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {[contact.position, contact.email].filter(Boolean).join(" · ")}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              {contact.email && (
+                                <TooltipProvider delayDuration={200}><Tooltip><TooltipTrigger><Mail className="h-3 w-3 text-muted-foreground" /></TooltipTrigger><TooltipContent>Has email</TooltipContent></Tooltip></TooltipProvider>
+                              )}
+                              {contact.phone_no && (
+                                <TooltipProvider delayDuration={200}><Tooltip><TooltipTrigger><Phone className="h-3 w-3 text-muted-foreground" /></TooltipTrigger><TooltipContent>Has phone</TooltipContent></Tooltip></TooltipProvider>
+                              )}
+                              {contact.linkedin && (
+                                <TooltipProvider delayDuration={200}><Tooltip><TooltipTrigger><Linkedin className="h-3 w-3 text-muted-foreground" /></TooltipTrigger><TooltipContent>Has LinkedIn</TooltipContent></Tooltip></TooltipProvider>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {availableAccounts.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No available accounts</p>}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddAccountModalOpen(false)}>Cancel</Button>
-            <Button onClick={handleAddAccounts} disabled={selectedIds.length === 0}>Add {selectedIds.length} Account(s)</Button>
-          </DialogFooter>
+          <div className="flex items-center justify-between pt-2 border-t border-border flex-shrink-0">
+            <span className="text-xs text-muted-foreground">
+              {selectedIds.length} account{selectedIds.length !== 1 ? "s" : ""}
+              {selectedContactIdsForAccounts.length > 0 && `, ${selectedContactIdsForAccounts.length} contact${selectedContactIdsForAccounts.length !== 1 ? "s" : ""}`} selected
+            </span>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setAddAccountModalOpen(false)}>Cancel</Button>
+              <Button onClick={handleAddAccounts} disabled={selectedIds.length === 0}>
+                Add {selectedIds.length} Account{selectedIds.length !== 1 ? "s" : ""}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
       {/* ─── Add Contacts Modal ─── */}
       <Dialog open={addContactModalOpen} onOpenChange={(open) => { setAddContactModalOpen(open); if (!open) setAddContactForAccount(null); }}>
-        <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>
               {addContactForAccount ? `Add Contacts from ${addContactForAccount.name}` : "Add Contacts to Campaign"}
@@ -942,17 +1077,17 @@ export function CampaignAccountsContacts({ campaignId, isCampaignEnded, campaign
               <p className="text-xs text-muted-foreground mt-1">Showing contacts from campaign accounts</p>
             )}
           </DialogHeader>
-          <div className="relative mb-4">
+          <div className="relative mb-4 flex-shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search contacts..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9" />
           </div>
           {availableContacts.length > 0 && (
-            <div className="flex items-center gap-3 p-2 border-b border-border mb-1 cursor-pointer" onClick={() => handleSelectAll(availableContacts)}>
+            <div className="flex items-center gap-3 p-2 border-b border-border mb-1 cursor-pointer flex-shrink-0" onClick={() => handleSelectAll(availableContacts)}>
               <Checkbox checked={selectedIds.length === availableContacts.length && availableContacts.length > 0} />
               <span className="text-sm font-medium">Select All ({availableContacts.length})</span>
             </div>
           )}
-          <div className="max-h-[400px] overflow-y-auto space-y-1">
+          <div className="flex-1 overflow-y-auto space-y-1 min-h-0">
             {availableContacts.map((contact) => (
               <div key={contact.id} className="flex items-center gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer" onClick={() => toggleSelect(contact.id)}>
                 <Checkbox checked={selectedIds.includes(contact.id)} />
