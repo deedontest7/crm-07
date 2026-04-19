@@ -17,6 +17,12 @@ export interface SendEmailResult {
   sentAsUser?: boolean;
 }
 
+export interface GraphAttachment {
+  name: string;
+  contentBytesBase64: string;
+  contentType?: string;
+}
+
 export function getAzureEmailConfig(): AzureEmailConfig | null {
   const tenantId = Deno.env.get("AZURE_EMAIL_TENANT_ID") || Deno.env.get("AZURE_TENANT_ID");
   const clientId = Deno.env.get("AZURE_EMAIL_CLIENT_ID") || Deno.env.get("AZURE_CLIENT_ID");
@@ -51,11 +57,6 @@ export async function getGraphAccessToken(config: AzureEmailConfig): Promise<str
   return data.access_token;
 }
 
-/**
- * Send email via Graph using the sender's own mailbox so campaign emails
- * always appear from the logged-in user, not the shared CRM mailbox.
- * After sending, poll Sent Items to retrieve conversation/thread metadata.
- */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -106,11 +107,11 @@ async function fetchSentMessageMetadata(
         recipientMatches[0];
 
       if (match) {
-        const graphMessageId = match.id || undefined;
-        const internetMessageId = match.internetMessageId || undefined;
-        const conversationId = match.conversationId || undefined;
-        console.log(`Retrieved sent message metadata for ${mailboxEmail}: graphId=${graphMessageId}, internetMsgId=${internetMessageId}, convId=${conversationId}`);
-        return { graphMessageId, internetMessageId, conversationId };
+        return {
+          graphMessageId: match.id || undefined,
+          internetMessageId: match.internetMessageId || undefined,
+          conversationId: match.conversationId || undefined,
+        };
       }
     } catch (metaErr) {
       console.warn(`Error retrieving sent message metadata for ${mailboxEmail} on attempt ${attempt + 1}:`, metaErr);
@@ -130,6 +131,7 @@ export async function sendEmailViaGraph(
   htmlBody: string,
   fromEmail?: string,
   replyToInternetMessageId?: string,
+  attachments?: GraphAttachment[],
 ): Promise<SendEmailResult> {
   const senderMailbox = (fromEmail || senderEmail).trim();
   const sendUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(senderMailbox)}/sendMail`;
@@ -145,6 +147,15 @@ export async function sendEmailViaGraph(
       { name: "In-Reply-To", value: replyToInternetMessageId },
       { name: "References", value: replyToInternetMessageId },
     ];
+  }
+
+  if (attachments && attachments.length > 0) {
+    message.attachments = attachments.map((a) => ({
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name: a.name,
+      contentType: a.contentType || "application/octet-stream",
+      contentBytes: a.contentBytesBase64,
+    }));
   }
 
   const sendResp = await fetch(sendUrl, {

@@ -10,13 +10,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
-import { expandRegionsForDb } from "@/utils/countryRegionMapping";
+import { expandRegionsForDb, normalizeCountryName } from "@/utils/countryRegionMapping";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   campaignId: string;
   selectedRegions?: string[];
+  selectedCountries?: string[];
   existingAccountIds: string[];
   existingContactIds: string[];
   campaignAccounts: any[];
@@ -39,7 +40,7 @@ async function fetchAllContacts() {
   return allData;
 }
 
-export function AddAccountsModal({ open, onOpenChange, campaignId, selectedRegions = [], existingAccountIds, existingContactIds, campaignAccounts }: Props) {
+export function AddAccountsModal({ open, onOpenChange, campaignId, selectedRegions = [], selectedCountries = [], existingAccountIds, existingContactIds, campaignAccounts }: Props) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
@@ -47,11 +48,27 @@ export function AddAccountsModal({ open, onOpenChange, campaignId, selectedRegio
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
 
+  // Build country variant list (canonical + raw) so we catch DB rows like "United States" or "us"
+  const countryVariants = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of selectedCountries) {
+      if (!c) continue;
+      set.add(c);
+      const canon = normalizeCountryName(c);
+      if (canon) set.add(canon);
+    }
+    return Array.from(set);
+  }, [selectedCountries]);
+
   const { data: allAccounts = [] } = useQuery({
-    queryKey: ["all-accounts", selectedRegions.join(",")],
+    queryKey: ["all-accounts", selectedRegions.join(","), countryVariants.join(",")],
     queryFn: async () => {
       let q = supabase.from("accounts").select("id, account_name, industry, region, country");
-      if (selectedRegions.length > 0) q = q.in("region", expandRegionsForDb(selectedRegions));
+      if (countryVariants.length > 0) {
+        q = q.in("country", countryVariants);
+      } else if (selectedRegions.length > 0) {
+        q = q.in("region", expandRegionsForDb(selectedRegions));
+      }
       const { data, error } = await q;
       if (error) throw error;
       return data;

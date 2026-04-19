@@ -1,4 +1,5 @@
 import { AlertCircle } from "lucide-react";
+import { useMemo } from "react";
 import type { Campaign } from "@/hooks/useCampaigns";
 import { CampaignAudienceTable } from "./CampaignAudienceTable";
 
@@ -11,7 +12,20 @@ interface Props {
   isCampaignEnded: boolean;
 }
 
+function parseSelectedCountries(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      return Array.from(new Set(arr.map((r: any) => r.country).filter(Boolean)));
+    }
+  } catch {}
+  return [];
+}
+
 export function CampaignAudience({ campaign, selectedRegions, isCampaignEnded }: Props) {
+  const selectedCountries = useMemo(() => parseSelectedCountries(campaign.region), [campaign.region]);
+
   return (
     <div className="space-y-3">
       {selectedRegions.length === 0 && (
@@ -30,6 +44,7 @@ export function CampaignAudience({ campaign, selectedRegions, isCampaignEnded }:
         campaignId={campaign.id}
         isCampaignEnded={isCampaignEnded}
         selectedRegions={selectedRegions}
+        selectedCountries={selectedCountries}
       />
     </div>
   );

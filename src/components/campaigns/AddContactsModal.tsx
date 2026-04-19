@@ -16,17 +16,21 @@ interface Props {
   forAccount: { id: string; name: string } | null;
   existingContactIds: string[];
   campaignAccounts: any[];
+  selectedCountries?: string[];
 }
 
-async function fetchAllContacts() {
+async function fetchAllContacts(filterCompanyNames: string[] | null) {
   const batchSize = 1000;
   let allData: any[] = [];
   let from = 0;
   while (true) {
-    const { data, error } = await supabase
+    let q = supabase
       .from("contacts")
-      .select("id, contact_name, email, position, company_name, phone_no, linkedin")
-      .range(from, from + batchSize - 1);
+      .select("id, contact_name, email, position, company_name, phone_no, linkedin");
+    if (filterCompanyNames && filterCompanyNames.length > 0) {
+      q = q.in("company_name", filterCompanyNames);
+    }
+    const { data, error } = await q.range(from, from + batchSize - 1);
     if (error) throw error;
     allData.push(...(data || []));
     if (!data || data.length < batchSize) break;
@@ -35,7 +39,7 @@ async function fetchAllContacts() {
   return allData;
 }
 
-export function AddContactsModal({ open, onOpenChange, campaignId, forAccount, existingContactIds, campaignAccounts }: Props) {
+export function AddContactsModal({ open, onOpenChange, campaignId, forAccount, existingContactIds, campaignAccounts, selectedCountries = [] }: Props) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
@@ -43,9 +47,17 @@ export function AddContactsModal({ open, onOpenChange, campaignId, forAccount, e
 
   const campaignAccountNames = campaignAccounts.map((ca: any) => ca.accounts?.account_name).filter(Boolean);
 
+  // Limit contacts to companies that are part of the campaign (the only sensible scope).
+  // selectedCountries already filtered campaign accounts upstream, so this transitively respects countries.
+  const filterCompanyNames = useMemo(() => {
+    if (forAccount) return [forAccount.name];
+    if (campaignAccountNames.length > 0) return campaignAccountNames;
+    return null;
+  }, [forAccount, campaignAccountNames.join("|")]);
+
   const { data: allContacts = [] } = useQuery({
-    queryKey: ["all-contacts-paginated"],
-    queryFn: fetchAllContacts,
+    queryKey: ["campaign-eligible-contacts", filterCompanyNames?.join("|") || "all", selectedCountries.join(",")],
+    queryFn: () => fetchAllContacts(filterCompanyNames),
     enabled: open,
   });
 

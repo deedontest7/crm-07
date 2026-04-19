@@ -16,9 +16,10 @@ interface Props {
   campaignId: string;
   isCampaignEnded: boolean;
   selectedRegions?: string[];
+  selectedCountries?: string[];
 }
 
-export function CampaignAudienceTable({ campaignId, isCampaignEnded, selectedRegions = [] }: Props) {
+export function CampaignAudienceTable({ campaignId, isCampaignEnded, selectedRegions = [], selectedCountries = [] }: Props) {
   const queryClient = useQueryClient();
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
   const [addAccountModalOpen, setAddAccountModalOpen] = useState(false);
@@ -161,9 +162,6 @@ export function CampaignAudienceTable({ campaignId, isCampaignEnded, selectedReg
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="text-xs text-muted-foreground">
-            {totalAccounts} account{totalAccounts !== 1 ? "s" : ""} · {totalContacts} contact{totalContacts !== 1 ? "s" : ""}
-          </div>
           <div className="relative">
             <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
             <Input
@@ -172,6 +170,9 @@ export function CampaignAudienceTable({ campaignId, isCampaignEnded, selectedReg
               placeholder="Search accounts & contacts…"
               className="h-8 w-64 pl-8 text-xs"
             />
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {totalAccounts} account{totalAccounts !== 1 ? "s" : ""} · {totalContacts} contact{totalContacts !== 1 ? "s" : ""}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -329,6 +330,7 @@ export function CampaignAudienceTable({ campaignId, isCampaignEnded, selectedReg
         onOpenChange={setAddAccountModalOpen}
         campaignId={campaignId}
         selectedRegions={selectedRegions}
+        selectedCountries={selectedCountries}
         existingAccountIds={existingAccountIds}
         existingContactIds={existingContactIds}
         campaignAccounts={campaignAccounts}
@@ -341,6 +343,7 @@ export function CampaignAudienceTable({ campaignId, isCampaignEnded, selectedReg
         forAccount={addContactForAccount}
         existingContactIds={existingContactIds}
         campaignAccounts={campaignAccounts}
+        selectedCountries={selectedCountries}
       />
 
       <AlertDialog open={!!removeConfirm} onOpenChange={(open) => !open && setRemoveConfirm(null)}>

@@ -139,10 +139,10 @@ export function CampaignStrategy({ campaignId, campaign, isStrategyComplete, upd
   };
 
   const sectionIcons: Record<string, React.ReactNode> = {
-    region: <Globe className="h-4 w-4" />,
-    audience: <Users className="h-4 w-4" />,
-    message: <Mail className="h-4 w-4" />,
-    timing: <Clock className="h-4 w-4" />,
+    region: <Globe className="h-[18px] w-[18px]" />,
+    audience: <Users className="h-[18px] w-[18px]" />,
+    message: <Mail className="h-[18px] w-[18px]" />,
+    timing: <Clock className="h-[18px] w-[18px]" />,
   };
 
   // Unified header styling — all sections use the Region (blue) theme
@@ -179,9 +179,9 @@ export function CampaignStrategy({ campaignId, campaign, isStrategyComplete, upd
           return (
             <Collapsible key={section.key} open={isOpen} onOpenChange={() => toggleSection(section.key)}>
               <CollapsibleTrigger asChild>
-                <div className={`py-2 px-3 cursor-pointer transition-colors ${sectionStyles[section.key].header} ${sectionStyles[section.key].border} ${section.done ? "opacity-60" : ""}`}>
+                <div className={`py-3 px-4 cursor-pointer transition-colors ${sectionStyles[section.key].header} ${sectionStyles[section.key].border} ${section.done ? "opacity-60" : ""}`}>
                   <div className="grid grid-cols-3 items-center gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -196,22 +196,22 @@ export function CampaignStrategy({ campaignId, campaign, isStrategyComplete, upd
                         className="shrink-0 rounded-full hover:scale-110 transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         {section.done
-                          ? <CheckCircle2 className="h-5 w-5 text-primary fill-primary/20" />
-                          : <Circle className="h-5 w-5 text-muted-foreground hover:text-primary" />}
+                          ? <CheckCircle2 className="h-6 w-6 text-primary fill-primary/20" />
+                          : <Circle className="h-6 w-6 text-muted-foreground hover:text-primary" />}
                       </button>
                       <span className={sectionStyles[section.key].icon}>{sectionIcons[section.key]}</span>
-                      <span className={`text-sm font-semibold ${section.done ? "line-through text-muted-foreground" : ""}`}>{section.label}</span>
+                      <span className={`text-[15px] font-semibold ${section.done ? "line-through text-muted-foreground" : ""}`}>{section.label}</span>
                     </div>
                     <div className="flex justify-center min-w-0">
                       {!isOpen && (() => {
                         const summary = getContentSummary(section.key);
                         return summary ? (
-                          <span className="text-xs text-muted-foreground truncate">{summary}</span>
+                          <span className="text-[13px] text-muted-foreground truncate">{summary}</span>
                         ) : null;
                       })()}
                     </div>
                     <div className="flex items-center justify-end gap-1 shrink-0">
-                      <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                      <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
                     </div>
                   </div>
                 </div>
