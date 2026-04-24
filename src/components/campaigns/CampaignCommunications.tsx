@@ -31,10 +31,12 @@ import { Link } from "react-router-dom";
 interface Props {
   campaignId: string;
   isCampaignEnded: boolean;
+  /** Read-only mode: campaign is Completed → disable add/edit/delete actions */
+  isReadOnly?: boolean;
   viewMode?: "outreach" | "analytics";
   onViewModeChange?: (v: "outreach" | "analytics") => void;
   initialChannel?: "email" | "linkedin" | "call";
-  initialStatusFilter?: "all" | "sent" | "replied" | "failed" | "bounced";
+  initialStatusFilter?: "all" | "sent" | "replied" | "failed" | "bounced" | "notReplied" | "needsFollowup";
   initialThreadId?: string;
 }
 
