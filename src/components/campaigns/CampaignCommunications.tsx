@@ -965,6 +965,29 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly
     }
   }, [emailThreadsFiltered, selectedThreadKey]);
 
+  // Deep-link: hydrate selectedThreadKey from ?thread= on mount, and persist to URL when it changes.
+  useEffect(() => {
+    const fromUrl = searchParams.get("thread");
+    if (fromUrl && fromUrl !== selectedThreadKey && emailThreadsFiltered.some((t: any) => t.threadKey === fromUrl)) {
+      setSelectedThreadKey(fromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailThreadsFiltered.length]);
+
+  useEffect(() => {
+    const current = searchParams.get("thread");
+    if (selectedThreadKey && selectedThreadKey !== current) {
+      const next = new URLSearchParams(searchParams);
+      next.set("thread", selectedThreadKey);
+      setSearchParams(next, { replace: true });
+    } else if (!selectedThreadKey && current) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("thread");
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedThreadKey]);
+
 
   // --- Badges ---
   const channelBadge = (type: string) => {
