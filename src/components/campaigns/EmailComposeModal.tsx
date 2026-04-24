@@ -1345,6 +1345,26 @@ export function EmailComposeModal({ open, onOpenChange, campaignId, contacts: co
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={!!duplicateConfirm} onOpenChange={(o) => !o && setDuplicateConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Recent email already sent</AlertDialogTitle>
+            <AlertDialogDescription>
+              {duplicateConfirm?.recentIds.size} of your {duplicateConfirm?.ids.length} recipient(s) were already emailed in this campaign within the last {dupWindowDays} day{dupWindowDays === 1 ? "" : "s"}. Sending again may feel spammy. Continue anyway?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => {
+              const ids = duplicateConfirm?.ids || [];
+              setDuplicateConfirm(null);
+              void performSend(ids);
+            }}>Send anyway</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      </AlertDialog>
     </>
   );
 }
