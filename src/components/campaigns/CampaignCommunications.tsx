@@ -26,15 +26,17 @@ import { parseEmailBody } from "./emailBody";
 import { SyncStatusPill } from "./SyncStatusPill";
 import { isReachableEmail, isReachableLinkedIn, isReachablePhone, normalizeChannel, channelLabel, formatPhoneForDisplay } from "@/lib/email";
 import { areSubjectsCompatible } from "@/utils/subjectNormalize";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 interface Props {
   campaignId: string;
   isCampaignEnded: boolean;
+  /** Read-only mode: campaign is Completed → disable add/edit/delete actions */
+  isReadOnly?: boolean;
   viewMode?: "outreach" | "analytics";
   onViewModeChange?: (v: "outreach" | "analytics") => void;
   initialChannel?: "email" | "linkedin" | "call";
-  initialStatusFilter?: "all" | "sent" | "replied" | "failed" | "bounced";
+  initialStatusFilter?: "all" | "sent" | "replied" | "failed" | "bounced" | "notReplied" | "needsFollowup";
   initialThreadId?: string;
 }
 
@@ -59,7 +61,7 @@ interface ColumnDef {
   className?: string;
 }
 
-export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, onViewModeChange, initialChannel, initialStatusFilter, initialThreadId }: Props) {
+export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly = false, viewMode, onViewModeChange, initialChannel, initialStatusFilter, initialThreadId }: Props) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { logCreate } = useCRUDAudit();
@@ -78,7 +80,7 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, 
   const [outreachTab, setOutreachTab] = useState<OutreachTab>("email");
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [emailStatusFilter, setEmailStatusFilter] = useState<"all" | "sent" | "replied" | "failed" | "bounced">("all");
+  const [emailStatusFilter, setEmailStatusFilter] = useState<"all" | "sent" | "replied" | "failed" | "bounced" | "notReplied" | "needsFollowup">("all");
   const [linkedinStatusFilter, setLinkedinStatusFilter] = useState<"all" | "connectionSent" | "connected" | "messageSent" | "responded">("all");
   const [callStatusFilter, setCallStatusFilter] = useState<"all" | "interested" | "notInterested" | "callLater" | "noAnswer">("all");
   // B1: Eligible (reachable, no touch yet) | Touched (has at least one touch) | All — per LinkedIn/Call tab.
@@ -89,6 +91,7 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, 
   const [viewFullEmail, setViewFullEmail] = useState<any | null>(null);
   const [openThreads, setOpenThreads] = useState<Set<string>>(new Set());
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [threadInitDone, setThreadInitDone] = useState(false);
   const [isResyncing, setIsResyncing] = useState(false);
   const [resyncResult, setResyncResult] = useState<null | {
@@ -271,6 +274,25 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, 
     staleTime: 60_000,
     gcTime: 5 * 60_000,
   });
+
+  // Follow-up rules — used to compute "Needs Follow-up" threshold (max wait_business_days across enabled rules).
+  const { data: followUpRules = [] } = useQuery({
+    queryKey: ["campaign-follow-up-rules", campaignId, "monitoring"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("campaign_follow_up_rules")
+        .select("wait_business_days, is_enabled")
+        .eq("campaign_id", campaignId);
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 5 * 60_000,
+  });
+  const followUpWaitDays = useMemo(() => {
+    const enabled = followUpRules.filter((r: any) => r.is_enabled);
+    if (enabled.length === 0) return 3; // sensible default when no rules configured
+    return Math.max(...enabled.map((r: any) => Number(r.wait_business_days) || 3));
+  }, [followUpRules]);
 
   // Campaign metadata for primary-channel labelling
   const { data: campaignMeta } = useQuery({
@@ -877,9 +899,24 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, 
         if (emailStatusFilter === "replied") return t.hasReply;
         if (emailStatusFilter === "failed") return t.hasFailed;
         if (emailStatusFilter === "bounced") return t.messages.some((m: any) => m.email_status === "Bounced");
+        if (emailStatusFilter === "notReplied") {
+          // Has at least one outbound, and no inbound reply yet.
+          const hasOutbound = t.messages.some((m: any) => (m.sent_via || "manual") !== "graph-sync");
+          return hasOutbound && !t.hasReply;
+        }
+        if (emailStatusFilter === "needsFollowup") {
+          // No reply yet, AND latest outbound was sent more than `followUpWaitDays` calendar days ago.
+          if (t.hasReply) return false;
+          const outbound = t.messages.filter((m: any) => (m.sent_via || "manual") !== "graph-sync");
+          if (outbound.length === 0) return false;
+          const latestOut = outbound.reduce((acc: any, m: any) =>
+            new Date(m.communication_date || 0) > new Date(acc.communication_date || 0) ? m : acc, outbound[0]);
+          const ageDays = (Date.now() - new Date(latestOut.communication_date || 0).getTime()) / (1000 * 60 * 60 * 24);
+          return ageDays >= followUpWaitDays;
+        }
         return true;
       }) as any[];
-  }, [threads, accountFilter, contactFilter, ownerFilter, searchTerm, emailStatusFilter]);
+  }, [threads, accountFilter, contactFilter, ownerFilter, searchTerm, emailStatusFilter, followUpWaitDays]);
 
   // Seed the newest message of each thread as expanded-by-default exactly once
   // per threadKey. After this, users can freely toggle (collapse/re-expand) any
@@ -927,6 +964,29 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, 
       setSelectedThreadKey(emailThreadsFiltered[0]?.threadKey || null);
     }
   }, [emailThreadsFiltered, selectedThreadKey]);
+
+  // Deep-link: hydrate selectedThreadKey from ?thread= on mount, and persist to URL when it changes.
+  useEffect(() => {
+    const fromUrl = searchParams.get("thread");
+    if (fromUrl && fromUrl !== selectedThreadKey && emailThreadsFiltered.some((t: any) => t.threadKey === fromUrl)) {
+      setSelectedThreadKey(fromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailThreadsFiltered.length]);
+
+  useEffect(() => {
+    const current = searchParams.get("thread");
+    if (selectedThreadKey && selectedThreadKey !== current) {
+      const next = new URLSearchParams(searchParams);
+      next.set("thread", selectedThreadKey);
+      setSearchParams(next, { replace: true });
+    } else if (!selectedThreadKey && current) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("thread");
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedThreadKey]);
 
 
   // --- Badges ---
@@ -1677,15 +1737,34 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, 
           {renderFilterControls()}
 
           {/* Per-channel status chips inline with filters */}
-          {outreachTab === "email" && hasEmailStats && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <StatusChip label="All" count={emailComms.length} active={emailStatusFilter === "all"} onClick={() => setEmailStatusFilter("all")} />
-              <StatusChip label="Sent" count={emailStats.sent} active={emailStatusFilter === "sent"} onClick={() => setEmailStatusFilter(emailStatusFilter === "sent" ? "all" : "sent")} />
-              <StatusChip label="Replied" count={emailStats.replied} active={emailStatusFilter === "replied"} onClick={() => setEmailStatusFilter(emailStatusFilter === "replied" ? "all" : "replied")} tone="success" />
-              <StatusChip label="Failed" count={emailStats.failed} active={emailStatusFilter === "failed"} onClick={() => setEmailStatusFilter(emailStatusFilter === "failed" ? "all" : "failed")} tone="destructive" />
-              <StatusChip label="Bounced" count={emailStats.bounced} active={emailStatusFilter === "bounced"} onClick={() => setEmailStatusFilter(emailStatusFilter === "bounced" ? "all" : "bounced")} tone="warning" />
-            </div>
-          )}
+          {outreachTab === "email" && hasEmailStats && (() => {
+            // Compute counts for "Not Replied" and "Needs Follow-up" from already-built threads.
+            const allEmailThreads = threads.filter((t: any) => t?.threadType === "email");
+            const notRepliedCount = allEmailThreads.filter((t: any) => {
+              const hasOutbound = t.messages?.some((m: any) => (m.sent_via || "manual") !== "graph-sync");
+              return hasOutbound && !t.hasReply;
+            }).length;
+            const needsFollowupCount = allEmailThreads.filter((t: any) => {
+              if (t.hasReply) return false;
+              const outbound = (t.messages || []).filter((m: any) => (m.sent_via || "manual") !== "graph-sync");
+              if (outbound.length === 0) return false;
+              const latestOut = outbound.reduce((acc: any, m: any) =>
+                new Date(m.communication_date || 0) > new Date(acc.communication_date || 0) ? m : acc, outbound[0]);
+              const ageDays = (Date.now() - new Date(latestOut.communication_date || 0).getTime()) / (1000 * 60 * 60 * 24);
+              return ageDays >= followUpWaitDays;
+            }).length;
+            return (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <StatusChip label="All" count={emailComms.length} active={emailStatusFilter === "all"} onClick={() => setEmailStatusFilter("all")} />
+                <StatusChip label="Sent" count={emailStats.sent} active={emailStatusFilter === "sent"} onClick={() => setEmailStatusFilter(emailStatusFilter === "sent" ? "all" : "sent")} />
+                <StatusChip label="Replied" count={emailStats.replied} active={emailStatusFilter === "replied"} onClick={() => setEmailStatusFilter(emailStatusFilter === "replied" ? "all" : "replied")} tone="success" />
+                <StatusChip label="Not Replied" count={notRepliedCount} active={emailStatusFilter === "notReplied"} onClick={() => setEmailStatusFilter(emailStatusFilter === "notReplied" ? "all" : "notReplied")} />
+                <StatusChip label={`Needs Follow-up (${followUpWaitDays}d)`} count={needsFollowupCount} active={emailStatusFilter === "needsFollowup"} onClick={() => setEmailStatusFilter(emailStatusFilter === "needsFollowup" ? "all" : "needsFollowup")} tone="warning" />
+                <StatusChip label="Failed" count={emailStats.failed} active={emailStatusFilter === "failed"} onClick={() => setEmailStatusFilter(emailStatusFilter === "failed" ? "all" : "failed")} tone="destructive" />
+                <StatusChip label="Bounced" count={emailStats.bounced} active={emailStatusFilter === "bounced"} onClick={() => setEmailStatusFilter(emailStatusFilter === "bounced" ? "all" : "bounced")} tone="warning" />
+              </div>
+            );
+          })()}
           {outreachTab === "linkedin" && hasLinkedinStats && (
             <div className="flex flex-wrap items-center gap-1.5">
               <StatusChip label="All" count={linkedinComms.length} active={linkedinStatusFilter === "all"} onClick={() => setLinkedinStatusFilter("all")} />
@@ -1775,7 +1854,8 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, 
                         size="sm"
                         variant="default"
                         className="h-7 gap-1"
-                        disabled={emailableContacts.length === 0}
+                        disabled={isReadOnly || emailableContacts.length === 0}
+                        title={isReadOnly ? "Campaign is Completed — read-only" : undefined}
                         onClick={() => {
                           setReplyContext(undefined);
                           setEmailComposeOpen(true);
@@ -1809,7 +1889,8 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, 
                             size="sm"
                             variant="outline"
                             className="h-7"
-                            disabled={reach === 0}
+                            disabled={isReadOnly || reach === 0}
+                            title={isReadOnly ? "Campaign is Completed — read-only" : undefined}
                             onClick={() => openLogModal(outreachTab === "linkedin" ? "LinkedIn" : "Call")}
                           >
                             <Plus className="h-3.5 w-3.5 mr-1" />

@@ -20,6 +20,7 @@ import { Send, FileText, Eye, Paperclip, AlertTriangle, Search, Users, User, Rot
 import { toast } from "sonner";
 import { useUserDisplayNames } from "@/hooks/useUserDisplayNames";
 import { useAuth } from "@/hooks/useAuth";
+import { useDuplicateSendGuard } from "@/hooks/useDuplicateSendGuard";
 import { isReachableEmail } from "@/lib/email";
 import {
   AVAILABLE_VARIABLES,
@@ -94,6 +95,9 @@ export function EmailComposeModal({ open, onOpenChange, campaignId, contacts: co
   const [showVariables, setShowVariables] = useState(false);
   const [showPerRecipientPreview, setShowPerRecipientPreview] = useState(false);
   const [bounceConfirmOpen, setBounceConfirmOpen] = useState(false);
+  const [duplicateConfirm, setDuplicateConfirm] = useState<{ ids: string[]; recentIds: Set<string> } | null>(null);
+
+  const { windowDays: dupWindowDays, getRecentlyEmailedIds } = useDuplicateSendGuard(campaignId);
 
   // Active recipient list derived from mode
   const activeRecipientIds = useMemo(
@@ -618,10 +622,18 @@ export function EmailComposeModal({ open, onOpenChange, campaignId, contacts: co
     }
   };
 
-  const handleSendClick = () => {
+  const handleSendClick = async () => {
     if (!isReplyMode && selectedBouncedCount > 0) {
       setBounceConfirmOpen(true);
       return;
+    }
+    // Duplicate-send guard: warn if any recipient was emailed in the last N days for this campaign.
+    if (!isReplyMode && activeRecipientIds.length > 0) {
+      const recent = await getRecentlyEmailedIds(activeRecipientIds);
+      if (recent.size > 0) {
+        setDuplicateConfirm({ ids: activeRecipientIds, recentIds: recent });
+        return;
+      }
     }
     void performSend(activeRecipientIds);
   };
@@ -1330,6 +1342,25 @@ export function EmailComposeModal({ open, onOpenChange, campaignId, contacts: co
             <AlertDialogAction onClick={() => { setBounceConfirmOpen(false); void performSend(activeRecipientIds); }}>
               Send anyway
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!duplicateConfirm} onOpenChange={(o) => !o && setDuplicateConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Recent email already sent</AlertDialogTitle>
+            <AlertDialogDescription>
+              {duplicateConfirm?.recentIds.size} of your {duplicateConfirm?.ids.length} recipient(s) were already emailed in this campaign within the last {dupWindowDays} day{dupWindowDays === 1 ? "" : "s"}. Sending again may feel spammy. Continue anyway?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => {
+              const ids = duplicateConfirm?.ids || [];
+              setDuplicateConfirm(null);
+              void performSend(ids);
+            }}>Send anyway</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
