@@ -26,7 +26,7 @@ import { parseEmailBody } from "./emailBody";
 import { SyncStatusPill } from "./SyncStatusPill";
 import { isReachableEmail, isReachableLinkedIn, isReachablePhone, normalizeChannel, channelLabel, formatPhoneForDisplay } from "@/lib/email";
 import { areSubjectsCompatible } from "@/utils/subjectNormalize";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 interface Props {
   campaignId: string;
