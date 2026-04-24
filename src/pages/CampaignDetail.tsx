@@ -412,6 +412,7 @@ export default function CampaignDetail() {
                   <CampaignCommunications
                     campaignId={campaign.id}
                     isCampaignEnded={isCampaignEnded}
+                    isReadOnly={isCompleted}
                     viewMode={monitoringView}
                     onViewModeChange={setMonitoringView}
                     initialChannel={drilldown?.tab === "monitoring" ? drilldown.channel : undefined}
