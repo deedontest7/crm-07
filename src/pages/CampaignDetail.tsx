@@ -326,6 +326,18 @@ export default function CampaignDetail() {
             End date has passed while still in Draft. Activate, reschedule, or mark complete.
           </div>
         )}
+        {!isCompleted && !isDraftEndedPast && typeof daysRemaining === "number" && daysRemaining >= 0 && daysRemaining <= 7 && (
+          <div className="mb-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-1.5 text-xs text-yellow-700 dark:text-yellow-400 flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Campaign ends in {daysRemaining === 0 ? "today" : `${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`}. Wrap up outreach or extend the end date.
+          </div>
+        )}
+        {isCompleted && (
+          <div className="mb-2 rounded-md border border-green-500/40 bg-green-500/10 px-3 py-1.5 text-xs text-green-700 dark:text-green-400 flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            This campaign is Completed — Setup and Monitoring are read-only.
+          </div>
+        )}
       </div>
 
       {/* 4 Tabs */}
