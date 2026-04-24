@@ -61,7 +61,7 @@ interface ColumnDef {
   className?: string;
 }
 
-export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, onViewModeChange, initialChannel, initialStatusFilter, initialThreadId }: Props) {
+export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly = false, viewMode, onViewModeChange, initialChannel, initialStatusFilter, initialThreadId }: Props) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { logCreate } = useCRUDAudit();
@@ -80,7 +80,7 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, viewMode, 
   const [outreachTab, setOutreachTab] = useState<OutreachTab>("email");
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [emailStatusFilter, setEmailStatusFilter] = useState<"all" | "sent" | "replied" | "failed" | "bounced">("all");
+  const [emailStatusFilter, setEmailStatusFilter] = useState<"all" | "sent" | "replied" | "failed" | "bounced" | "notReplied" | "needsFollowup">("all");
   const [linkedinStatusFilter, setLinkedinStatusFilter] = useState<"all" | "connectionSent" | "connected" | "messageSent" | "responded">("all");
   const [callStatusFilter, setCallStatusFilter] = useState<"all" | "interested" | "notInterested" | "callLater" | "noAnswer">("all");
   // B1: Eligible (reachable, no touch yet) | Touched (has at least one touch) | All — per LinkedIn/Call tab.
