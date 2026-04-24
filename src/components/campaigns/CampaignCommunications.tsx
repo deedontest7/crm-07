@@ -1713,15 +1713,34 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly
           {renderFilterControls()}
 
           {/* Per-channel status chips inline with filters */}
-          {outreachTab === "email" && hasEmailStats && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <StatusChip label="All" count={emailComms.length} active={emailStatusFilter === "all"} onClick={() => setEmailStatusFilter("all")} />
-              <StatusChip label="Sent" count={emailStats.sent} active={emailStatusFilter === "sent"} onClick={() => setEmailStatusFilter(emailStatusFilter === "sent" ? "all" : "sent")} />
-              <StatusChip label="Replied" count={emailStats.replied} active={emailStatusFilter === "replied"} onClick={() => setEmailStatusFilter(emailStatusFilter === "replied" ? "all" : "replied")} tone="success" />
-              <StatusChip label="Failed" count={emailStats.failed} active={emailStatusFilter === "failed"} onClick={() => setEmailStatusFilter(emailStatusFilter === "failed" ? "all" : "failed")} tone="destructive" />
-              <StatusChip label="Bounced" count={emailStats.bounced} active={emailStatusFilter === "bounced"} onClick={() => setEmailStatusFilter(emailStatusFilter === "bounced" ? "all" : "bounced")} tone="warning" />
-            </div>
-          )}
+          {outreachTab === "email" && hasEmailStats && (() => {
+            // Compute counts for "Not Replied" and "Needs Follow-up" from already-built threads.
+            const allEmailThreads = threads.filter((t: any) => t?.threadType === "email");
+            const notRepliedCount = allEmailThreads.filter((t: any) => {
+              const hasOutbound = t.messages?.some((m: any) => (m.sent_via || "manual") !== "graph-sync");
+              return hasOutbound && !t.hasReply;
+            }).length;
+            const needsFollowupCount = allEmailThreads.filter((t: any) => {
+              if (t.hasReply) return false;
+              const outbound = (t.messages || []).filter((m: any) => (m.sent_via || "manual") !== "graph-sync");
+              if (outbound.length === 0) return false;
+              const latestOut = outbound.reduce((acc: any, m: any) =>
+                new Date(m.communication_date || 0) > new Date(acc.communication_date || 0) ? m : acc, outbound[0]);
+              const ageDays = (Date.now() - new Date(latestOut.communication_date || 0).getTime()) / (1000 * 60 * 60 * 24);
+              return ageDays >= followUpWaitDays;
+            }).length;
+            return (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <StatusChip label="All" count={emailComms.length} active={emailStatusFilter === "all"} onClick={() => setEmailStatusFilter("all")} />
+                <StatusChip label="Sent" count={emailStats.sent} active={emailStatusFilter === "sent"} onClick={() => setEmailStatusFilter(emailStatusFilter === "sent" ? "all" : "sent")} />
+                <StatusChip label="Replied" count={emailStats.replied} active={emailStatusFilter === "replied"} onClick={() => setEmailStatusFilter(emailStatusFilter === "replied" ? "all" : "replied")} tone="success" />
+                <StatusChip label="Not Replied" count={notRepliedCount} active={emailStatusFilter === "notReplied"} onClick={() => setEmailStatusFilter(emailStatusFilter === "notReplied" ? "all" : "notReplied")} />
+                <StatusChip label={`Needs Follow-up (${followUpWaitDays}d)`} count={needsFollowupCount} active={emailStatusFilter === "needsFollowup"} onClick={() => setEmailStatusFilter(emailStatusFilter === "needsFollowup" ? "all" : "needsFollowup")} tone="warning" />
+                <StatusChip label="Failed" count={emailStats.failed} active={emailStatusFilter === "failed"} onClick={() => setEmailStatusFilter(emailStatusFilter === "failed" ? "all" : "failed")} tone="destructive" />
+                <StatusChip label="Bounced" count={emailStats.bounced} active={emailStatusFilter === "bounced"} onClick={() => setEmailStatusFilter(emailStatusFilter === "bounced" ? "all" : "bounced")} tone="warning" />
+              </div>
+            );
+          })()}
           {outreachTab === "linkedin" && hasLinkedinStats && (
             <div className="flex flex-wrap items-center gap-1.5">
               <StatusChip label="All" count={linkedinComms.length} active={linkedinStatusFilter === "all"} onClick={() => setLinkedinStatusFilter("all")} />
