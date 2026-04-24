@@ -20,6 +20,7 @@ import { Send, FileText, Eye, Paperclip, AlertTriangle, Search, Users, User, Rot
 import { toast } from "sonner";
 import { useUserDisplayNames } from "@/hooks/useUserDisplayNames";
 import { useAuth } from "@/hooks/useAuth";
+import { useDuplicateSendGuard } from "@/hooks/useDuplicateSendGuard";
 import { isReachableEmail } from "@/lib/email";
 import {
   AVAILABLE_VARIABLES,
@@ -94,6 +95,9 @@ export function EmailComposeModal({ open, onOpenChange, campaignId, contacts: co
   const [showVariables, setShowVariables] = useState(false);
   const [showPerRecipientPreview, setShowPerRecipientPreview] = useState(false);
   const [bounceConfirmOpen, setBounceConfirmOpen] = useState(false);
+  const [duplicateConfirm, setDuplicateConfirm] = useState<{ ids: string[]; recentIds: Set<string> } | null>(null);
+
+  const { windowDays: dupWindowDays, getRecentlyEmailedIds } = useDuplicateSendGuard(campaignId);
 
   // Active recipient list derived from mode
   const activeRecipientIds = useMemo(
