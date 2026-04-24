@@ -1364,7 +1364,6 @@ export function EmailComposeModal({ open, onOpenChange, campaignId, contacts: co
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      </AlertDialog>
     </>
   );
 }
