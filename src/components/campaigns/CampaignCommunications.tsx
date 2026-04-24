@@ -274,6 +274,25 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly
     gcTime: 5 * 60_000,
   });
 
+  // Follow-up rules — used to compute "Needs Follow-up" threshold (max wait_business_days across enabled rules).
+  const { data: followUpRules = [] } = useQuery({
+    queryKey: ["campaign-follow-up-rules", campaignId, "monitoring"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("campaign_follow_up_rules")
+        .select("wait_business_days, is_enabled")
+        .eq("campaign_id", campaignId);
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 5 * 60_000,
+  });
+  const followUpWaitDays = useMemo(() => {
+    const enabled = followUpRules.filter((r: any) => r.is_enabled);
+    if (enabled.length === 0) return 3; // sensible default when no rules configured
+    return Math.max(...enabled.map((r: any) => Number(r.wait_business_days) || 3));
+  }, [followUpRules]);
+
   // Campaign metadata for primary-channel labelling
   const { data: campaignMeta } = useQuery({
     queryKey: ["campaign-primary-channel", campaignId],
