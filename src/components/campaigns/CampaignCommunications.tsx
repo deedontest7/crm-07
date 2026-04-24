@@ -898,9 +898,24 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly
         if (emailStatusFilter === "replied") return t.hasReply;
         if (emailStatusFilter === "failed") return t.hasFailed;
         if (emailStatusFilter === "bounced") return t.messages.some((m: any) => m.email_status === "Bounced");
+        if (emailStatusFilter === "notReplied") {
+          // Has at least one outbound, and no inbound reply yet.
+          const hasOutbound = t.messages.some((m: any) => (m.sent_via || "manual") !== "graph-sync");
+          return hasOutbound && !t.hasReply;
+        }
+        if (emailStatusFilter === "needsFollowup") {
+          // No reply yet, AND latest outbound was sent more than `followUpWaitDays` calendar days ago.
+          if (t.hasReply) return false;
+          const outbound = t.messages.filter((m: any) => (m.sent_via || "manual") !== "graph-sync");
+          if (outbound.length === 0) return false;
+          const latestOut = outbound.reduce((acc: any, m: any) =>
+            new Date(m.communication_date || 0) > new Date(acc.communication_date || 0) ? m : acc, outbound[0]);
+          const ageDays = (Date.now() - new Date(latestOut.communication_date || 0).getTime()) / (1000 * 60 * 60 * 24);
+          return ageDays >= followUpWaitDays;
+        }
         return true;
       }) as any[];
-  }, [threads, accountFilter, contactFilter, ownerFilter, searchTerm, emailStatusFilter]);
+  }, [threads, accountFilter, contactFilter, ownerFilter, searchTerm, emailStatusFilter, followUpWaitDays]);
 
   // Seed the newest message of each thread as expanded-by-default exactly once
   // per threadKey. After this, users can freely toggle (collapse/re-expand) any
