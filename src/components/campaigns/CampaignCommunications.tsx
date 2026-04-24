@@ -91,6 +91,7 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly
   const [viewFullEmail, setViewFullEmail] = useState<any | null>(null);
   const [openThreads, setOpenThreads] = useState<Set<string>>(new Set());
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [threadInitDone, setThreadInitDone] = useState(false);
   const [isResyncing, setIsResyncing] = useState(false);
   const [resyncResult, setResyncResult] = useState<null | {
