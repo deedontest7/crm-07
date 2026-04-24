@@ -622,10 +622,18 @@ export function EmailComposeModal({ open, onOpenChange, campaignId, contacts: co
     }
   };
 
-  const handleSendClick = () => {
+  const handleSendClick = async () => {
     if (!isReplyMode && selectedBouncedCount > 0) {
       setBounceConfirmOpen(true);
       return;
+    }
+    // Duplicate-send guard: warn if any recipient was emailed in the last N days for this campaign.
+    if (!isReplyMode && activeRecipientIds.length > 0) {
+      const recent = await getRecentlyEmailedIds(activeRecipientIds);
+      if (recent.size > 0) {
+        setDuplicateConfirm({ ids: activeRecipientIds, recentIds: recent });
+        return;
+      }
     }
     void performSend(activeRecipientIds);
   };
