@@ -387,11 +387,19 @@ export function CampaignMessage({ campaignId, campaign, selectedRegions = [], au
 
   const MATERIAL_TYPES = ["One Pager", "Presentation", "Case Study", "Brochure", "Other"];
 
-  // Channel-aware visibility. Empty / "Mixed" = show everything.
-  const ch = (campaign?.primary_channel || "").trim();
-  const showEmails = !ch || ch === "Email";
-  const showCalls = !ch || ch === "Phone" || ch === "Call";
-  const showLinkedIn = !ch || ch === "LinkedIn";
+  // Channel-aware visibility honors enabled_channels (multi-channel) with legacy
+  // fallback to primary_channel. Empty / no channels = show everything.
+  const norm = (v?: string | null) => (v === "Call" ? "Phone" : (v || "")).trim();
+  const enabled: string[] = (() => {
+    const raw = (campaign as any)?.enabled_channels as string[] | null | undefined;
+    const arr = (raw && raw.length > 0) ? raw.map(norm).filter(Boolean) : [];
+    if (arr.length > 0) return arr;
+    const pc = norm(campaign?.primary_channel);
+    return pc ? [pc] : [];
+  })();
+  const showEmails = enabled.length === 0 || enabled.includes("Email");
+  const showCalls = enabled.length === 0 || enabled.includes("Phone");
+  const showLinkedIn = enabled.length === 0 || enabled.includes("LinkedIn");
 
   const tabsConfig: Array<{ key: "emails" | "scripts" | "linkedin" | "materials"; visible: boolean }> = [
     { key: "emails", visible: showEmails },
