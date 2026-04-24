@@ -1830,7 +1830,8 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly
                         size="sm"
                         variant="default"
                         className="h-7 gap-1"
-                        disabled={emailableContacts.length === 0}
+                        disabled={isReadOnly || emailableContacts.length === 0}
+                        title={isReadOnly ? "Campaign is Completed — read-only" : undefined}
                         onClick={() => {
                           setReplyContext(undefined);
                           setEmailComposeOpen(true);
@@ -1864,7 +1865,8 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly
                             size="sm"
                             variant="outline"
                             className="h-7"
-                            disabled={reach === 0}
+                            disabled={isReadOnly || reach === 0}
+                            title={isReadOnly ? "Campaign is Completed — read-only" : undefined}
                             onClick={() => openLogModal(outreachTab === "linkedin" ? "LinkedIn" : "Call")}
                           >
                             <Plus className="h-3.5 w-3.5 mr-1" />
