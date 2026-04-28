@@ -759,16 +759,21 @@ Deno.serve(async (req) => {
           const convEmails = bucketByCompositeKey.get(chosenKey) || [];
           const receivedTime = new Date(receivedAt).getTime();
 
-          // === HEADER-ANCHORED FAST PATH ===
+          // === HEADER-ANCHORED FAST PATH (AUTHORITATIVE) ===
           // If In-Reply-To / References pointed at one of our outbound emails,
-          // treat THAT specific email as the parent — bypass the bucket-based
-          // chronology gate, which produces false negatives when Gmail/Outlook
-          // bridges rotate the conversationId on cross-domain replies.
+          // OR the subject+contact+time-window rescue found a parent, treat
+          // THAT specific email as the parent — bypass the bucket-based
+          // chronology gate entirely. Bucket chronology produces false
+          // negatives whenever Gmail/Outlook bridges rotate the conversationId
+          // on cross-domain replies (the parent ends up in a different bucket
+          // than the inbound). The header/rescue match is more reliable than
+          // bucket membership.
           let originalEmail: any = null;
-          // 60-second clock-skew tolerance: Outlook's `receivedDateTime` is
+          // 120-second clock-skew tolerance: Outlook's `receivedDateTime` is
           // sometimes recorded slightly before our DB writes the outbound's
-          // `communication_date` (the post-send insert is async).
-          const SKEW_MS = 60_000;
+          // `communication_date` (the post-send insert is async, and Graph
+          // processing can drift under load).
+          const SKEW_MS = 120_000;
           if (
             headerAnchoredParent &&
             headerAnchoredParent.communication_date &&
@@ -776,7 +781,10 @@ Deno.serve(async (req) => {
             areSubjectsCompatible(msg.subject, headerAnchoredParent.subject)
           ) {
             // Re-load the full row from convEmails if it's in our bucket; else
-            // synthesize a parent record sufficient for the insert below.
+            // fetch a complete parent row so we have campaign_id, contact_id,
+            // account_id, owner, created_by, internet_message_id for the
+            // insert below. Synthesizing the parent makes the header/rescue
+            // match independent of the inbound's conversationId bucket.
             const inBucket = convEmails.find((o) => o.id === headerAnchoredParent!.id);
             if (inBucket) {
               originalEmail = inBucket;
