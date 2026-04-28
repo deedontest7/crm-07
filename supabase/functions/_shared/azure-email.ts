@@ -215,29 +215,23 @@ function injectCorrelationMarker(htmlBody: string, token: string): string {
 }
 
 /**
- * Decide whether to use standard RFC 5322 header names (`In-Reply-To`,
- * `References`) or Microsoft's `x-` prefixed variants. Standard names are
- * what Gmail/Outlook actually use for threading; the `x-` variants only
- * exist because older Graph builds rejected non-prefixed custom headers.
+ * Microsoft Graph's `sendMail` rejects standard RFC 5322 header names
+ * (`In-Reply-To`, `References`) as InvalidInternetMessageHeader and only
+ * accepts `x-` prefixed custom headers. But Gmail and Outlook both IGNORE
+ * `x-` prefixed variants for threading — sending them is worse than
+ * sending nothing because it makes the recipient open a brand-new thread.
  *
- * Strategy: try standard names first. If Graph rejects with
- * ErrorInvalidInternetMessageHeader, the caller retries with `x-` prefix.
+ * So we no longer emit threading headers via sendMail at all. The only
+ * reliable path for true thread continuity is `createReply` (which Graph
+ * fills out with proper headers server-side). When `createReply` is not
+ * available, the send goes out as a fresh thread — and the caller sees
+ * `errorCode: "REPLY_THREADING_BROKEN"` so the UI can surface it.
  */
 function buildThreadingHeaders(
-  replyToInternetMessageId: string | undefined,
-  prevReferences: string | undefined,
-  useXPrefix: boolean,
+  _replyToInternetMessageId: string | undefined,
+  _prevReferences: string | undefined,
 ): InternetHeader[] {
-  if (!replyToInternetMessageId) return [];
-  const irtName = useXPrefix ? "x-In-Reply-To" : "In-Reply-To";
-  const refsName = useXPrefix ? "x-References" : "References";
-  const refsValue = (prevReferences || "").trim()
-    ? `${(prevReferences || "").trim()} ${replyToInternetMessageId}`
-    : replyToInternetMessageId;
-  return [
-    { name: irtName, value: replyToInternetMessageId },
-    { name: refsName, value: refsValue },
-  ];
+  return [];
 }
 
 export async function sendEmailViaGraph(
