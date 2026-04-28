@@ -715,7 +715,6 @@ Deno.serve(async (req) => {
 
           // 1. Strict match by contact email.
           let chosenKey: string | null = null;
-          const matchReasons: string[] = [];
           const matchedKeys: string[] = [];
           for (const key of candidateBucketKeys) {
             const bucket = bucketByCompositeKey.get(key) || [];
