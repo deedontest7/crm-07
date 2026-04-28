@@ -421,6 +421,19 @@ export async function sendEmailViaGraph(
     } catch (e) {
       console.warn("Native reply path threw, falling back to sendMail:", (e as Error).message);
     }
+
+    // Both createReply attempts failed (or threw). Do NOT fall through to
+    // sendMail with x-prefixed headers — that path produces an unthreaded
+    // message Gmail/Outlook will treat as a new conversation. Hard-fail so
+    // the UI can surface it instead of silently breaking threading.
+    return {
+      success: false,
+      error:
+        "Reply threading unavailable: Graph createReply failed against both the parent's mailbox and the sender mailbox. " +
+        "The recipient would receive this as a new thread. Please retry, or send as a fresh email.",
+      errorCode: "REPLY_THREADING_BROKEN",
+      sentAsUser: false,
+    };
   }
 
   // Reply path B / new send: sendMail with x-prefixed In-Reply-To / References.
