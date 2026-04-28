@@ -1049,6 +1049,17 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly
     }
   }, [emailThreadsFiltered, selectedThreadKey]);
 
+  // When the user switches to a different thread, collapse all previously
+  // expanded messages and re-seed only the newest message of the new thread.
+  // Without this, expansions from the prior thread leak across thread
+  // switches and old messages stay open in the new view.
+  useEffect(() => {
+    if (!selectedThreadKey) return;
+    const t = emailThreadsFiltered.find((x: any) => x.threadKey === selectedThreadKey);
+    const newestId = t?.messages?.[0]?.id;
+    setExpandedMessages(newestId ? new Set([newestId]) : new Set());
+  }, [selectedThreadKey]);
+
   // Deep-link: hydrate selectedThreadKey from ?thread= on mount, and persist to URL when it changes.
   useEffect(() => {
     const fromUrl = searchParams.get("thread");

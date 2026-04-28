@@ -506,6 +506,9 @@ Deno.serve(async (req) => {
           const headerCandidateIds = Array.from(new Set(rawIds.flatMap(normalizeMsgId)));
 
           let candidateBucketKeys: string[] = [];
+          // Track all reasons (header / rescue / bucket) we matched a parent —
+          // surfaced in logs and notes for forensics.
+          const matchReasons: string[] = [];
           // RFC 5322 header-anchored parent — when present, this is the AUTHORITATIVE
           // parent for chronology, even if the inbound's conversationId got rotated
           // by Gmail/Outlook bridges (a common cause of false "chronology" skips).
@@ -551,7 +554,7 @@ Deno.serve(async (req) => {
             if (contactIdsForSender.length > 0) {
               const { data: chronoCandidates } = await supabase
                 .from("campaign_communications")
-                .select("id, conversation_id, contact_id, campaign_id, communication_date, subject")
+                .select("id, conversation_id, contact_id, account_id, campaign_id, owner, created_by, internet_message_id, communication_date, subject")
                 .in("contact_id", contactIdsForSender)
                 .eq("communication_type", "Email")
                 .in("sent_via", ["azure", "sequence_runner"])
@@ -563,13 +566,36 @@ Deno.serve(async (req) => {
                 areSubjectsCompatible(msg.subject, c.subject || ""),
               );
               if (compatible?.conversation_id) {
-                candidateBucketKeys = bucketsByConvId.get(compatible.conversation_id) || candidateBucketKeys;
                 headerAnchoredParent = {
                   id: compatible.id,
                   conversation_id: compatible.conversation_id,
                   communication_date: compatible.communication_date || null,
                   subject: compatible.subject || null,
                 };
+                // Synthesize a bucket entry so downstream contact-match and
+                // chosenBucketSample logic works even when the parent's conv
+                // isn't tracked in this mailbox's bucket (the common case
+                // when Outlook rotates conversationId).
+                const synthKey = compositeKey(
+                  compatible.conversation_id,
+                  compatible.contact_id,
+                  compatible.campaign_id,
+                );
+                if (!bucketByCompositeKey.has(synthKey)) {
+                  // Resolve the contact's email so the downstream guard at
+                  // line ~740 doesn't reject this match as contact_mismatch.
+                  const contactEmailForRescue =
+                    contactEmailById.get(compatible.contact_id) || fromEmail;
+                  bucketByCompositeKey.set(synthKey, [
+                    {
+                      ...compatible,
+                      sender_mailbox: mailbox,
+                      contact_email: contactEmailForRescue,
+                    } as TrackableEmailRecord,
+                  ]);
+                }
+                candidateBucketKeys = [synthKey];
+                matchReasons.push("subject_chronology_rescue");
               }
             }
           }
@@ -689,7 +715,6 @@ Deno.serve(async (req) => {
 
           // 1. Strict match by contact email.
           let chosenKey: string | null = null;
-          const matchReasons: string[] = [];
           const matchedKeys: string[] = [];
           for (const key of candidateBucketKeys) {
             const bucket = bucketByCompositeKey.get(key) || [];
@@ -759,16 +784,21 @@ Deno.serve(async (req) => {
           const convEmails = bucketByCompositeKey.get(chosenKey) || [];
           const receivedTime = new Date(receivedAt).getTime();
 
-          // === HEADER-ANCHORED FAST PATH ===
+          // === HEADER-ANCHORED FAST PATH (AUTHORITATIVE) ===
           // If In-Reply-To / References pointed at one of our outbound emails,
-          // treat THAT specific email as the parent — bypass the bucket-based
-          // chronology gate, which produces false negatives when Gmail/Outlook
-          // bridges rotate the conversationId on cross-domain replies.
+          // OR the subject+contact+time-window rescue found a parent, treat
+          // THAT specific email as the parent — bypass the bucket-based
+          // chronology gate entirely. Bucket chronology produces false
+          // negatives whenever Gmail/Outlook bridges rotate the conversationId
+          // on cross-domain replies (the parent ends up in a different bucket
+          // than the inbound). The header/rescue match is more reliable than
+          // bucket membership.
           let originalEmail: any = null;
-          // 60-second clock-skew tolerance: Outlook's `receivedDateTime` is
+          // 120-second clock-skew tolerance: Outlook's `receivedDateTime` is
           // sometimes recorded slightly before our DB writes the outbound's
-          // `communication_date` (the post-send insert is async).
-          const SKEW_MS = 60_000;
+          // `communication_date` (the post-send insert is async, and Graph
+          // processing can drift under load).
+          const SKEW_MS = 120_000;
           if (
             headerAnchoredParent &&
             headerAnchoredParent.communication_date &&
@@ -776,7 +806,10 @@ Deno.serve(async (req) => {
             areSubjectsCompatible(msg.subject, headerAnchoredParent.subject)
           ) {
             // Re-load the full row from convEmails if it's in our bucket; else
-            // synthesize a parent record sufficient for the insert below.
+            // fetch a complete parent row so we have campaign_id, contact_id,
+            // account_id, owner, created_by, internet_message_id for the
+            // insert below. Synthesizing the parent makes the header/rescue
+            // match independent of the inbound's conversationId bucket.
             const inBucket = convEmails.find((o) => o.id === headerAnchoredParent!.id);
             if (inBucket) {
               originalEmail = inBucket;
@@ -1020,6 +1053,98 @@ Deno.serve(async (req) => {
       } catch (mbErr) {
         console.error(`Error processing mailbox ${mailbox}:`, mbErr);
       }
+    }
+
+    // === REPLAY: chronology-skipped rows from the last 24h ===
+    // The earlier matcher run may have skipped a real reply because the
+    // parent's conversationId got rotated by Outlook. With the now-improved
+    // header/rescue logic, re-attempt every chronology skip from the last
+    // 24h. Idempotent: existing inserts are skipped via the `internet_message_id`
+    // dedupe in `campaign_communications`.
+    let replayMatched = 0;
+    try {
+      const replayCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: skipped } = await supabase
+        .from("email_reply_skip_log")
+        .select("id, contact_email, sender_email, subject, conversation_id, received_at, parent_subject, details")
+        .eq("skip_reason", "chronology")
+        .gte("created_at", replayCutoff)
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      for (const row of skipped || []) {
+        if (!row.received_at || !row.sender_email) continue;
+        // De-dupe by conversation_id+received_at — once a reply lands, skip.
+        const { data: alreadyInserted } = await supabase
+          .from("campaign_communications")
+          .select("id")
+          .eq("sent_via", "graph-sync")
+          .eq("conversation_id", row.conversation_id)
+          .eq("communication_date", row.received_at)
+          .maybeSingle();
+        if (alreadyInserted) continue;
+
+        const receivedMs = new Date(row.received_at).getTime();
+        const windowStart = new Date(receivedMs - 10 * 60 * 1000).toISOString();
+        const windowEnd = new Date(receivedMs + 60 * 1000).toISOString();
+        const { data: senderContacts } = await supabase
+          .from("contacts")
+          .select("id")
+          .ilike("email", row.sender_email.toLowerCase())
+          .limit(5);
+        const cIds = (senderContacts || []).map((c: any) => c.id);
+        if (cIds.length === 0) continue;
+
+        const { data: cands } = await supabase
+          .from("campaign_communications")
+          .select("id, campaign_id, contact_id, account_id, owner, created_by, subject, internet_message_id, communication_date, conversation_id")
+          .in("contact_id", cIds)
+          .eq("communication_type", "Email")
+          .in("sent_via", ["azure", "sequence_runner"])
+          .gte("communication_date", windowStart)
+          .lte("communication_date", windowEnd)
+          .order("communication_date", { ascending: false })
+          .limit(10);
+        const parent = (cands || []).find((c: any) =>
+          areSubjectsCompatible(row.subject, c.subject || ""),
+        );
+        if (!parent) continue;
+
+        const { error: insertErr } = await supabase
+          .from("campaign_communications")
+          .insert({
+            campaign_id: parent.campaign_id,
+            contact_id: parent.contact_id,
+            account_id: parent.account_id || null,
+            communication_type: "Email",
+            subject: row.subject || `Re: ${parent.subject || ""}`,
+            body: null,
+            email_status: "Replied",
+            delivery_status: "received",
+            sent_via: "graph-sync",
+            conversation_id: row.conversation_id,
+            parent_id: parent.id,
+            owner: parent.owner,
+            created_by: parent.created_by,
+            notes: `Reply from ${row.sender_email} [replay:subject_chronology_rescue]`,
+            communication_date: row.received_at,
+          });
+        if (insertErr) {
+          console.error(`Replay insert failed for skip ${row.id}:`, insertErr);
+          continue;
+        }
+        await supabase
+          .from("campaign_communications")
+          .update({ email_status: "Replied" })
+          .eq("id", parent.id);
+        replayMatched++;
+      }
+      if (replayMatched > 0) {
+        console.log(`Replay rescued ${replayMatched} previously-skipped replies`);
+        totalRepliesFound += replayMatched;
+      }
+    } catch (replayErr) {
+      console.error("Replay step failed:", replayErr);
     }
 
     const totalSkipped =
