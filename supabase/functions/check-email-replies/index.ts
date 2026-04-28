@@ -551,7 +551,7 @@ Deno.serve(async (req) => {
             if (contactIdsForSender.length > 0) {
               const { data: chronoCandidates } = await supabase
                 .from("campaign_communications")
-                .select("id, conversation_id, contact_id, campaign_id, communication_date, subject")
+                .select("id, conversation_id, contact_id, account_id, campaign_id, owner, created_by, internet_message_id, communication_date, subject")
                 .in("contact_id", contactIdsForSender)
                 .eq("communication_type", "Email")
                 .in("sent_via", ["azure", "sequence_runner"])
@@ -563,13 +563,36 @@ Deno.serve(async (req) => {
                 areSubjectsCompatible(msg.subject, c.subject || ""),
               );
               if (compatible?.conversation_id) {
-                candidateBucketKeys = bucketsByConvId.get(compatible.conversation_id) || candidateBucketKeys;
                 headerAnchoredParent = {
                   id: compatible.id,
                   conversation_id: compatible.conversation_id,
                   communication_date: compatible.communication_date || null,
                   subject: compatible.subject || null,
                 };
+                // Synthesize a bucket entry so downstream contact-match and
+                // chosenBucketSample logic works even when the parent's conv
+                // isn't tracked in this mailbox's bucket (the common case
+                // when Outlook rotates conversationId).
+                const synthKey = compositeKey(
+                  compatible.conversation_id,
+                  compatible.contact_id,
+                  compatible.campaign_id,
+                );
+                if (!bucketByCompositeKey.has(synthKey)) {
+                  // Resolve the contact's email so the downstream guard at
+                  // line ~740 doesn't reject this match as contact_mismatch.
+                  const contactEmailForRescue =
+                    contactEmailById.get(compatible.contact_id) || fromEmail;
+                  bucketByCompositeKey.set(synthKey, [
+                    {
+                      ...compatible,
+                      sender_mailbox: mailbox,
+                      contact_email: contactEmailForRescue,
+                    } as TrackableEmailRecord,
+                  ]);
+                }
+                candidateBucketKeys = [synthKey];
+                matchReasons.push("subject_chronology_rescue");
               }
             }
           }
