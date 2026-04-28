@@ -436,13 +436,22 @@ export async function sendEmailViaGraph(
     };
   }
 
-  // Reply path B / new send: sendMail with x-prefixed In-Reply-To / References.
-  // Note: Microsoft Graph's `sendMail` rejects standard RFC 5322 header names
-  // ("In-Reply-To", "References") as InvalidInternetMessageHeader and only
-  // accepts `x-` prefixed custom headers. Most mail clients (Gmail/Outlook)
-  // ignore `x-` prefixed variants for threading — which is why createReply
-  // (above) is the only reliable path for true thread continuity. We still
-  // include the x- headers as best-effort metadata for our own reply matcher.
+  // If we get here on a REPLY (caller passed an internet/graph message id)
+  // it means createReply was unavailable AND we couldn't resolve a graph id —
+  // sendMail with x-prefixed headers would land as a new thread. Hard-fail.
+  if (replyToInternetMessageId || replyToGraphMessageId) {
+    return {
+      success: false,
+      error:
+        "Reply threading unavailable: could not resolve the original message in Microsoft Graph to build a true reply. " +
+        "Sending as a new thread would break the conversation. Please retry in a moment, or send as a fresh email.",
+      errorCode: "REPLY_THREADING_BROKEN",
+      sentAsUser: false,
+    };
+  }
+
+  // New send path. We do NOT emit threading headers via sendMail because
+  // Graph rejects standard names and Gmail/Outlook ignore the `x-` variants.
   const sendUrl = `https://graph.microsoft.com/v1.0/users/${encodedMailbox}/sendMail`;
   const baseAttachments = attachments && attachments.length > 0
     ? attachments.map((a) => ({
@@ -463,7 +472,6 @@ export async function sendEmailViaGraph(
   const threadingHeaders = buildThreadingHeaders(
     replyToInternetMessageId,
     options?.previousReferences,
-    true, // always x-prefix; Graph rejects standard names
   );
   const callerHeaders = (internetMessageHeaders || []).map((h) => ({
     name: h.name.startsWith("x-") || h.name.startsWith("X-") ? h.name : `x-${h.name}`,
