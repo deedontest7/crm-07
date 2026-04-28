@@ -506,6 +506,9 @@ Deno.serve(async (req) => {
           const headerCandidateIds = Array.from(new Set(rawIds.flatMap(normalizeMsgId)));
 
           let candidateBucketKeys: string[] = [];
+          // Track all reasons (header / rescue / bucket) we matched a parent —
+          // surfaced in logs and notes for forensics.
+          const matchReasons: string[] = [];
           // RFC 5322 header-anchored parent — when present, this is the AUTHORITATIVE
           // parent for chronology, even if the inbound's conversationId got rotated
           // by Gmail/Outlook bridges (a common cause of false "chronology" skips).
