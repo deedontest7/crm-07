@@ -578,8 +578,10 @@ Deno.serve(async (req) => {
           // tight subject+contact+time-window match against our outbound rows.
           if (!headerAnchoredParent && fromEmail) {
             const receivedTimeMs = new Date(receivedAt).getTime();
-            const windowStart = new Date(receivedTimeMs - 10 * 60 * 1000).toISOString();
-            const windowEnd = new Date(receivedTimeMs + 60 * 1000).toISOString();
+            // Wider window: replies can arrive seconds OR days after the
+            // outbound. Bound by 7d back / 2min forward (clock skew tolerance).
+            const windowStart = new Date(receivedTimeMs - 7 * 24 * 60 * 60 * 1000).toISOString();
+            const windowEnd = new Date(receivedTimeMs + 2 * 60 * 1000).toISOString();
             // Find contacts matching the sender email (cheap; usually 0-2 rows).
             const { data: contactsBySender } = await supabase
               .from("contacts")
