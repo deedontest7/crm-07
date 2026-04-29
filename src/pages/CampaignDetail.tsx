@@ -241,15 +241,7 @@ export default function CampaignDetail() {
     performStatusChange(newStatus);
   };
 
-  // Auto-prompt to Activate the moment all 4 Setup sections become done while in Draft.
-  // Edge-triggered: only fires on the false→true transition so dismissing doesn't re-open it.
-  useEffect(() => {
-    const prev = prevAllDoneRef.current;
-    prevAllDoneRef.current = isFullyStrategyComplete;
-    if (!prev && isFullyStrategyComplete && currentStatus === "Draft" && !isCompleted && !isCampaignEnded) {
-      setActivateOpen(true);
-    }
-  }, [isFullyStrategyComplete, currentStatus, isCompleted, isCampaignEnded]);
+  // (Auto-activate effect moved above early returns to keep hook order stable.)
 
   // Intercept Setup section unmark on non-Draft campaigns: confirm revert-to-Draft first.
   const handleSectionUnmarkRequiresRevert = (flag: string, label: string): boolean => {
