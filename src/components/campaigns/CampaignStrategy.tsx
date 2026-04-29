@@ -63,7 +63,7 @@ export function parseSelectedRegions(raw: string | null): string[] {
   return raw && !raw.startsWith("[") ? [raw] : [];
 }
 
-export function CampaignStrategy({ campaignId, campaign, isStrategyComplete, updateStrategyFlag, isCampaignEnded, daysRemaining, timingNotes, initialOpenSection, audienceView, isReadOnly = false, contentCounts }: Props) {
+export function CampaignStrategy({ campaignId, campaign, isStrategyComplete, updateStrategyFlag, isCampaignEnded, daysRemaining, timingNotes, initialOpenSection, audienceView, isReadOnly = false, contentCounts, onSectionUnmarkRequiresRevert }: Props) {
   const queryClient = useQueryClient();
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     region: true, audience: false, message: false, timing: false,
