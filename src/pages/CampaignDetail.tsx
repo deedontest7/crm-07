@@ -91,6 +91,10 @@ export default function CampaignDetail() {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [activateOpen, setActivateOpen] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
+  const [revertOpen, setRevertOpen] = useState(false);
+  const pendingRevertRef = useRef<{ flag: string; label: string } | null>(null);
+  // Edge-detect ref for the auto Activate prompt: only fire when all-done flips false→true.
+  const prevAllDoneRef = useRef<boolean>(false);
   // C11: in-flight queue counter — surface "N emails still in flight" before completing.
   const { data: inFlightCount = 0 } = useQuery({
     queryKey: ["send-jobs-in-flight", id],
