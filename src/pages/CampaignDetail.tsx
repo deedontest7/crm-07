@@ -1,7 +1,7 @@
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useCampaignDetail, useCampaigns, useCampaignIdFromSlug, type CampaignDetailEnabledTabs } from "@/hooks/useCampaigns";
 import { useUserDisplayNames } from "@/hooks/useUserDisplayNames";
-import { useState, useMemo, useEffect, lazy, Suspense } from "react";
+import { useState, useMemo, useEffect, useRef, lazy, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
