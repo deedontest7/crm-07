@@ -644,3 +644,7 @@ export default function CampaignDetail() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+    </TooltipProvider>
+  );
+}
