@@ -226,6 +226,37 @@ export default function CampaignDetail() {
     performStatusChange(newStatus);
   };
 
+  // Auto-prompt to Activate the moment all 4 Setup sections become done while in Draft.
+  // Edge-triggered: only fires on the false→true transition so dismissing doesn't re-open it.
+  useEffect(() => {
+    const prev = prevAllDoneRef.current;
+    prevAllDoneRef.current = isFullyStrategyComplete;
+    if (!prev && isFullyStrategyComplete && currentStatus === "Draft" && !isCompleted && !isCampaignEnded) {
+      setActivateOpen(true);
+    }
+  }, [isFullyStrategyComplete, currentStatus, isCompleted, isCampaignEnded]);
+
+  // Intercept Setup section unmark on non-Draft campaigns: confirm revert-to-Draft first.
+  const handleSectionUnmarkRequiresRevert = (flag: string, label: string): boolean => {
+    if (currentStatus === "Draft" || isCompleted) return false;
+    pendingRevertRef.current = { flag, label };
+    setRevertOpen(true);
+    return true;
+  };
+
+  const confirmRevertToDraft = async () => {
+    const pending = pendingRevertRef.current;
+    setRevertOpen(false);
+    if (!pending) return;
+    try {
+      await detail.updateStrategyFlag(pending.flag, false);
+      performStatusChange("Draft");
+      toast({ title: `Reverted to Draft — edit ${pending.label} and re-activate when ready.` });
+    } finally {
+      pendingRevertRef.current = null;
+    }
+  };
+
   const statusDot: Record<string, string> = {
     Draft: "bg-muted-foreground",
     Scheduled: "bg-cyan-500",
