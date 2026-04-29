@@ -410,6 +410,7 @@ export default function CampaignDetail() {
                   campaign={campaign}
                   isStrategyComplete={isStrategyComplete}
                   updateStrategyFlag={detail.updateStrategyFlag}
+                  onSectionUnmarkRequiresRevert={handleSectionUnmarkRequiresRevert}
                   isCampaignEnded={isCampaignEnded}
                   daysRemaining={daysRemaining}
                   timingNotes={detail.strategy?.timing_notes}
