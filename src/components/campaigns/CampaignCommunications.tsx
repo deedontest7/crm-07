@@ -2022,9 +2022,14 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly
               lastSyncedAt={lastSyncedAt}
               isSyncing={isSyncing || isResyncing}
               onRetry={() => {
-                const composite = selectedThreadKey || "";
-                const parts = composite.split("::");
-                const contactScope = parts.length === 2 && parts[1] && parts[1] !== "no-contact" ? parts[1] : undefined;
+                // Resolve contact scope from the actual selected thread object,
+                // not by string-splitting selectedThreadKey — Outlook conversation
+                // IDs themselves can contain "::" and break naive parsing.
+                const selected = emailThreadsFiltered.find((t: any) => t.threadKey === selectedThreadKey);
+                const contactScope =
+                  selected?.contactId && selected.contactId !== "no-contact"
+                    ? selected.contactId
+                    : undefined;
                 void runResync(contactScope);
               }}
             />

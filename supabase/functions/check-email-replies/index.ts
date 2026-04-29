@@ -427,6 +427,19 @@ Deno.serve(async (req) => {
         const inboxMessages = await fetchInboxMessages(accessToken, mailbox, sinceISO);
         console.log(`Got ${inboxMessages.length} inbox messages for ${mailbox}`);
 
+        // Build a per-mailbox index of (contactEmail -> outbound subjects/dates)
+        // so we can include inbound messages from known campaign contacts even
+        // when conversationId was rotated and headers were stripped (Gmail
+        // cross-domain replies frequently hit this case).
+        const outboundsByContactEmail = new Map<string, Array<{ subject: string | null; date: string | null }>>();
+        for (const e of trackableEmails) {
+          if (e.sender_mailbox !== mailbox) continue;
+          if (!e.contact_email) continue;
+          const list = outboundsByContactEmail.get(e.contact_email) || [];
+          list.push({ subject: e.subject, date: e.communication_date });
+          outboundsByContactEmail.set(e.contact_email, list);
+        }
+
         const relevantMessages: any[] = [];
         for (const msg of inboxMessages) {
           if (msg.conversationId && trackedConvIds.has(msg.conversationId)) {
@@ -446,7 +459,30 @@ Deno.serve(async (req) => {
               msg.inReplyTo || headerVal("In-Reply-To") || headerVal("x-In-Reply-To"),
               ...String(headerVal("References") || headerVal("x-References") || "").split(/\s+/),
             ].filter(Boolean);
-            if (ids.some((id) => allInternetMsgIds.has(id))) relevantMessages.push(msg);
+            if (ids.some((id) => allInternetMsgIds.has(id))) {
+              relevantMessages.push(msg);
+              continue;
+            }
+            // Final gate — sender matches a known campaign contact AND subject
+            // is compatible with one of our recent outbounds to that contact,
+            // received AFTER the outbound (with skew tolerance). This rescues
+            // Gmail replies that arrive with neither matching conversationId
+            // nor matching In-Reply-To headers.
+            const senderAddr = (msg.from?.emailAddress?.address || "").trim().toLowerCase();
+            if (senderAddr && outboundsByContactEmail.has(senderAddr)) {
+              const outs = outboundsByContactEmail.get(senderAddr)!;
+              const recvMs = new Date(msg.receivedDateTime || 0).getTime();
+              const SKEW_MS = 120_000;
+              const matched = outs.some((o) => {
+                const outMs = new Date(o.date || 0).getTime();
+                if (!outMs || outMs > recvMs + SKEW_MS) return false;
+                return areSubjectsCompatible(msg.subject || "", o.subject || "");
+              });
+              if (matched) {
+                relevantMessages.push(msg);
+                continue;
+              }
+            }
         }
         console.log(`${relevantMessages.length} messages match tracked conversations for ${mailbox}`);
         totalScanned += relevantMessages.length;
@@ -542,8 +578,10 @@ Deno.serve(async (req) => {
           // tight subject+contact+time-window match against our outbound rows.
           if (!headerAnchoredParent && fromEmail) {
             const receivedTimeMs = new Date(receivedAt).getTime();
-            const windowStart = new Date(receivedTimeMs - 10 * 60 * 1000).toISOString();
-            const windowEnd = new Date(receivedTimeMs + 60 * 1000).toISOString();
+            // Wider window: replies can arrive seconds OR days after the
+            // outbound. Bound by 7d back / 2min forward (clock skew tolerance).
+            const windowStart = new Date(receivedTimeMs - 7 * 24 * 60 * 60 * 1000).toISOString();
+            const windowEnd = new Date(receivedTimeMs + 2 * 60 * 1000).toISOString();
             // Find contacts matching the sender email (cheap; usually 0-2 rows).
             const { data: contactsBySender } = await supabase
               .from("contacts")
