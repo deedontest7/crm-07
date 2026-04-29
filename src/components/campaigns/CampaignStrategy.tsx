@@ -144,6 +144,8 @@ export function CampaignStrategy({ campaignId, campaign, isStrategyComplete, upd
   };
 
   const handleUnmark = async (flag: string, label: string) => {
+    // Parent may intercept (e.g. show "Revert to Draft?" confirm on non-Draft campaigns).
+    if (onSectionUnmarkRequiresRevert?.(flag, label)) return;
     await updateStrategyFlag(flag, false);
     toast({ title: `${label} unmarked` });
   };
