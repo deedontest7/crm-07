@@ -485,7 +485,7 @@ export default function CampaignDetail() {
                   </div>
                 </Suspense>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <div className="flex justify-start">
                     <ToggleGroup
                       type="single"

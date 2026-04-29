@@ -1931,7 +1931,7 @@ export function CampaignCommunications({ campaignId, isCampaignEnded, isReadOnly
           )}
 
           {viewMode && onViewModeChange && (
-            <div className="inline-flex h-7 items-center rounded-md border bg-muted/40 p-0.5 text-xs">
+            <div className="inline-flex h-7 items-center rounded-md border bg-muted/40 p-0.5 text-xs mb-2 mr-2">
               <button
                 type="button"
                 onClick={() => onViewModeChange("outreach")}
