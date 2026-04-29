@@ -92,3 +92,12 @@ The existing tables already support this fix:
 - `campaign_unmatched_replies`
 
 No new migrations should be needed.
+---
+
+# Update — Reply detection fix (Apr 29)
+
+- Fixed hook-order crash in `CampaignDetail` by hoisting the auto-activate `useEffect` above the early returns.
+- Strengthened `check-email-replies` so Gmail replies whose `conversationId` and threading headers are stripped are still picked up:
+  - Built a per-mailbox `contactEmail → recent outbounds` index and treat an inbound as relevant when the sender is a known campaign contact AND the subject is compatible with one of our recent outbounds (received after the outbound with ±2min skew).
+  - Widened the inner subject/contact/time rescue window to 7d back / 2min forward so post-send replies are not lost to a too-narrow ±10min window.
+- Fixed the manual re-sync contact scoping in `CampaignCommunications.tsx` to use the selected thread's actual `contactId` instead of splitting `selectedThreadKey` on `::`.
