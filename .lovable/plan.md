@@ -1,46 +1,94 @@
-# Auto Activate / Revert-to-Draft Prompt for Setup
+## Findings
 
-## Goal
-Make the Draft → Active transition feel automatic:
-1. The moment all 4 Setup sections (Region, Audience, Message, Timing) flip to done **while status is Draft**, show an "Activate Campaign?" popup automatically.
-2. If the user later **unmarks** any Setup section while status is `Active`, `Scheduled`, or `Paused`, show a "Revert to Draft?" popup. On confirm, both the section is unmarked **and** status flips to `Draft`. On cancel, the unmark is rolled back so state stays consistent.
-3. After reverting to Draft, when all 4 sections are marked done again, the Activate popup appears again (same flow as step 1).
+I checked the uploaded Gmail PDF, current app route, database rows, edge-function logs, and the existing plan file.
 
-## UX rules
-- Activate popup re-uses the existing `activateOpen` AlertDialog — same copy, same scheduled-start warning. No new dialog component.
-- The popup auto-fires only **once per "all-done" transition** (track the previous all-done state with a ref so it doesn't re-open on every re-render or after the user dismisses it). It fires again only after the campaign drops out of "all done" and re-enters it.
-- Auto-popup is suppressed when: status is `Completed`/`Failed`, the campaign is read-only, or `isCampaignEnded` is true (end date passed).
-- Revert-to-Draft popup is a new small AlertDialog; copy: "Revert to Draft? This will pause outreach and monitoring so you can edit the {section} setup."
-- Toast messages remain ("Region marked as done"); the popup appears immediately after.
+For campaign `Campaign 29 April` / contact `Test 1 lukas schleicher`:
 
-## Technical changes
+- The outbound email was logged at `2026-04-29 03:48:40 UTC` with subject `Boosting TEST's CI/CD efficiency`.
+- The uploaded PDF shows the contact replied in Gmail at `2026-04-29 09:19 IST` (`03:49 UTC`) with: `Hello, Yes, I would be interested.`
+- The app ran `check-email-replies` shortly after, but the function logs show `0 messages match tracked conversations` for the scoped check, so no inbound row was inserted.
+- The broader sync saw inbox messages but still inserted `0` replies and logged chronology skips for older conversations.
+- The preview is also currently crashing in `CampaignDetail` with `Rendered more hooks than during the previous render`, caused by a hook added after early returns in the previous setup-status change. This can prevent the Monitoring UI from working reliably.
 
-### `src/pages/CampaignDetail.tsx`
-- Add a `useEffect` watching `isFullyStrategyComplete` + `currentStatus`. When it transitions `false → true` and status is `Draft` (and not ended/read-only), `setActivateOpen(true)`. Use a `useRef<boolean>` to remember the previous value so we only fire on the edge.
-- Add `revertOpen` state + `pendingRevertSection` ref holding `{ flag, label }` so the dialog knows which section triggered it.
-- Pass a new optional prop `onSectionUnmarkRequiresRevert?: (flag, label) => boolean` to `CampaignStrategy`. If status is non-Draft/non-Completed and the user clicks an already-done circle, the page intercepts: opens revert dialog instead of immediately calling `updateStrategyFlag(flag, false)`.
-- Confirm handler: `await updateStrategyFlag(flag, false)` then `performStatusChange("Draft")`.
-- Cancel handler: do nothing (section stays done).
+## Root causes to fix
 
-### `src/components/campaigns/CampaignStrategy.tsx`
-- Accept the new optional callback. In `handleUnmark`, if the callback returns `true` (intercepted), skip the local update — the page handles it.
-- No other behavior changes.
+1. **Reply detection is too dependent on Outlook Graph `conversationId` and headers.** Gmail can display the reply in the same thread while Microsoft Graph does not expose a matching Outlook `conversationId`, and headers may not be returned/matched in the first pass.
 
-## Bugs / improvements found during review
+2. **Subject/contact/time fallback is too narrow.** The existing rescue only looks around the reply received time with a very tight window. The current reply came about one minute after send, but if Graph timestamps or timezone/ingestion differ slightly, it can be missed. Older logs show this exact class of false `chronology` skip.
 
-1. **Status guard inconsistency**: `buildMenuOptions` allows "Revert to Draft" only from `Paused`, but the Setup-driven revert flow needs to also work from `Active` and `Scheduled`. Decision: the auto-revert popup bypasses the menu rule (it's an explicit user-confirmed action triggered by editing setup). The menu itself stays unchanged to keep manual reverts conservative.
-2. **Race on rapid toggling**: clicking "mark done" on the 4th section while the previous section's mutation is still pending could fire the popup before the DB flip lands. Mitigation: the popup reads `isFullyStrategyComplete` from the same `detail` snapshot, which already updates after `updateStrategyFlag` resolves, so the edge-detect ref is safe. No extra debounce needed.
-3. **`isCampaignEnded` Draft case**: existing banner already says "End date has passed while still in Draft." Auto-activate popup must be suppressed here so we don't prompt to activate an expired campaign.
-4. **`Completed` campaigns**: `isReadOnly` is already true; popup is suppressed via the same guard.
-5. **Toast spam**: when reverting, we currently emit "Region unmarked" toast plus would emit a "Status changed" toast. Suppress the section unmark toast in the revert path (page already shows the dialog + we can show one combined toast: "Reverted to Draft — edit {section} and re-activate when ready").
-6. **Audience hint suppression edge case** (pre-existing, not part of this task but flagged): in `CampaignStrategy.validateSection`, the audience reachable-on-primary check uses `counts.contactCount` truthiness — if `contactCount` is `0` the message is correctly skipped, but if it's `undefined` (loading) the warning also hides. Acceptable, just noting.
-7. **Mobile dialog overflow**: existing `AlertDialog` content is fine at 1176px; no changes needed.
+3. **Manual re-sync contact scoping is fragile.** The UI derives `contact_id` by splitting a composite thread key on `::`, but the Outlook `conversationId` itself can contain `::`, so the scoped re-sync may pass the wrong/no contact scope.
 
-## Out of scope
-- No changes to status state machine in `campaignStatus.ts` (`allowedTransitions` stays as-is).
-- No DB changes; uses existing `region_done`/`audience_done`/`message_done`/`timing_done` flags and existing status mutation.
-- No changes to send/queue logic.
+4. **Current route crash must be fixed first.** The hook-order runtime error in `CampaignDetail` must be corrected so the campaign page can render consistently.
 
-## Files touched
-- `src/pages/CampaignDetail.tsx` — auto-popup effect, revert dialog, intercept callback wiring.
-- `src/components/campaigns/CampaignStrategy.tsx` — accept and call the optional intercept callback in `handleUnmark`.
+## Implementation plan
+
+### 1. Fix the `CampaignDetail` hook-order crash
+
+Move the auto-activate `useEffect` above the `detail.isLoading` / `!detail.campaign` early returns, and make it safe when campaign data is not loaded yet.
+
+This fixes the runtime error without changing the intended popup behavior.
+
+### 2. Strengthen `check-email-replies` matching
+
+Update `supabase/functions/check-email-replies/index.ts` so inbound messages can be attached when they are clearly a reply by:
+
+- Keeping the existing header and `conversationId` matching.
+- Adding a stronger fallback match by:
+  - sender email equals the campaign contact email,
+  - subject is compatible with the outbound subject after `Re:` normalization,
+  - received time is after the outbound send time with reasonable clock-skew tolerance,
+  - same scoped campaign/contact when provided.
+- Expanding the rescue window from a few minutes to a safer post-send window for recent campaign emails.
+- Recording the match reason in notes/logs, e.g. `subject_contact_time_rescue`, for later auditing.
+- Avoiding false positives by requiring an exact contact email match and compatible subject before bypassing `conversationId`.
+
+Expected result: the Gmail reply from `deedontest1@gmail.com` to `Boosting TEST's CI/CD efficiency` will insert a `graph-sync` inbound communication, mark the original as `Replied`, and update the contact/account stage.
+
+### 3. Fix scoped re-sync contact extraction in the UI
+
+Update `CampaignCommunications.tsx` so `runResync(contactIdScope)` uses the selected thread's actual `contactId` instead of parsing `selectedThreadKey` with `split("::")`.
+
+This removes ambiguity when `conversationId` contains `::`.
+
+### 4. Add/repair backfill behavior for missed replies
+
+Improve the replay/backfill section in `check-email-replies` so recently skipped or unmatched messages can be reprocessed using the improved subject/contact/time logic.
+
+If the Graph inbox contains the current reply, a manual refresh should attach it immediately after deployment.
+
+### 5. Verify with logs and data
+
+After changes are approved and implemented:
+
+- Deploy/test `check-email-replies`.
+- Call it scoped to campaign `3676df53-a89f-4281-86cb-193b649c582e` and contact `f617dd33-46ca-4678-b670-fafc9612d1ca`.
+- Confirm a new `campaign_communications` row exists with:
+  - `sent_via = 'graph-sync'`
+  - `delivery_status = 'received'`
+  - `email_status = 'Replied'`
+  - body containing the contact reply text when Graph provides it.
+- Confirm the Monitoring tab shows `Replied 1` and the conversation shows 2 messages.
+
+## Files to change
+
+- `src/pages/CampaignDetail.tsx`
+  - Fix hook ordering for the auto-activate effect.
+
+- `src/components/campaigns/CampaignCommunications.tsx`
+  - Fix manual re-sync scoping to use selected thread/contact data directly.
+
+- `supabase/functions/check-email-replies/index.ts`
+  - Add safer subject/contact/time fallback matching and better replay/backfill logic.
+
+- `.lovable/plan.md`
+  - Update plan notes to document this reply-detection fix and the hook-order bug fix.
+
+## No database schema change planned
+
+The existing tables already support this fix:
+
+- `campaign_communications`
+- `email_reply_skip_log`
+- `campaign_unmatched_replies`
+
+No new migrations should be needed.

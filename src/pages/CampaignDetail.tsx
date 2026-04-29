@@ -129,6 +129,21 @@ export default function CampaignDetail() {
     return () => { document.title = "CRM"; };
   }, [detail.campaign?.campaign_name, (detail.campaign as any)?.slug, navigate, rawId]);
 
+  // Auto-prompt to Activate the moment all 4 Setup sections become done while in Draft.
+  // MUST be declared before any early returns to keep hook order stable.
+  const _isFullyStrategyComplete = detail.isFullyStrategyComplete;
+  const _statusForEffect = detail.campaign?.status || "Draft";
+  const _isCompletedForEffect = _statusForEffect === "Completed";
+  const _isCampaignEndedForEffect = !!detail.isCampaignEnded;
+  useEffect(() => {
+    const prev = prevAllDoneRef.current;
+    prevAllDoneRef.current = !!_isFullyStrategyComplete;
+    if (!detail.campaign) return;
+    if (!prev && _isFullyStrategyComplete && _statusForEffect === "Draft" && !_isCompletedForEffect && !_isCampaignEndedForEffect) {
+      setActivateOpen(true);
+    }
+  }, [_isFullyStrategyComplete, _statusForEffect, _isCompletedForEffect, _isCampaignEndedForEffect, detail.campaign]);
+
   if (detail.isLoading) {
     return (
       <div className="p-6 space-y-6">
