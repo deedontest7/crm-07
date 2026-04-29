@@ -32,6 +32,12 @@ interface Props {
   audienceView?: "accounts" | "contacts";
   /** When true (campaign Completed), Message section hides create/edit actions. */
   isReadOnly?: boolean;
+  /**
+   * Optional intercept fired when the user unmarks an already-done section.
+   * Return `true` to skip the local update — the parent will handle it
+   * (e.g. show a "Revert to Draft?" confirmation before flipping the flag).
+   */
+  onSectionUnmarkRequiresRevert?: (flag: string, label: string) => boolean;
   contentCounts?: {
     emailTemplateCount: number;
     phoneScriptCount: number;
