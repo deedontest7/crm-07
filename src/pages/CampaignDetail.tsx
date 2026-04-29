@@ -627,7 +627,20 @@ export default function CampaignDetail() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-    </TooltipProvider>
-  );
-}
+
+      <AlertDialog open={revertOpen} onOpenChange={(open) => { if (!open) pendingRevertRef.current = null; setRevertOpen(open); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revert to Draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingRevertRef.current
+                ? `Editing ${pendingRevertRef.current.label} requires moving this campaign back to Draft. Outreach and monitoring will pause until you re-activate.`
+                : "Editing this section requires moving this campaign back to Draft. Outreach and monitoring will pause until you re-activate."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRevertToDraft}>Revert to Draft</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
