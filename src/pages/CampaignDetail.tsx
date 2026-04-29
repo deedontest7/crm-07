@@ -1,7 +1,7 @@
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useCampaignDetail, useCampaigns, useCampaignIdFromSlug, type CampaignDetailEnabledTabs } from "@/hooks/useCampaigns";
 import { useUserDisplayNames } from "@/hooks/useUserDisplayNames";
-import { useState, useMemo, useEffect, lazy, Suspense } from "react";
+import { useState, useMemo, useEffect, useRef, lazy, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -91,6 +91,10 @@ export default function CampaignDetail() {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [activateOpen, setActivateOpen] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
+  const [revertOpen, setRevertOpen] = useState(false);
+  const pendingRevertRef = useRef<{ flag: string; label: string } | null>(null);
+  // Edge-detect ref for the auto Activate prompt: only fire when all-done flips false→true.
+  const prevAllDoneRef = useRef<boolean>(false);
   // C11: in-flight queue counter — surface "N emails still in flight" before completing.
   const { data: inFlightCount = 0 } = useQuery({
     queryKey: ["send-jobs-in-flight", id],
@@ -220,6 +224,37 @@ export default function CampaignDetail() {
       return;
     }
     performStatusChange(newStatus);
+  };
+
+  // Auto-prompt to Activate the moment all 4 Setup sections become done while in Draft.
+  // Edge-triggered: only fires on the false→true transition so dismissing doesn't re-open it.
+  useEffect(() => {
+    const prev = prevAllDoneRef.current;
+    prevAllDoneRef.current = isFullyStrategyComplete;
+    if (!prev && isFullyStrategyComplete && currentStatus === "Draft" && !isCompleted && !isCampaignEnded) {
+      setActivateOpen(true);
+    }
+  }, [isFullyStrategyComplete, currentStatus, isCompleted, isCampaignEnded]);
+
+  // Intercept Setup section unmark on non-Draft campaigns: confirm revert-to-Draft first.
+  const handleSectionUnmarkRequiresRevert = (flag: string, label: string): boolean => {
+    if (currentStatus === "Draft" || isCompleted) return false;
+    pendingRevertRef.current = { flag, label };
+    setRevertOpen(true);
+    return true;
+  };
+
+  const confirmRevertToDraft = async () => {
+    const pending = pendingRevertRef.current;
+    setRevertOpen(false);
+    if (!pending) return;
+    try {
+      await detail.updateStrategyFlag(pending.flag, false);
+      performStatusChange("Draft");
+      toast({ title: `Reverted to Draft — edit ${pending.label} and re-activate when ready.` });
+    } finally {
+      pendingRevertRef.current = null;
+    }
   };
 
   const statusDot: Record<string, string> = {
@@ -375,6 +410,7 @@ export default function CampaignDetail() {
                   campaign={campaign}
                   isStrategyComplete={isStrategyComplete}
                   updateStrategyFlag={detail.updateStrategyFlag}
+                  onSectionUnmarkRequiresRevert={handleSectionUnmarkRequiresRevert}
                   isCampaignEnded={isCampaignEnded}
                   daysRemaining={daysRemaining}
                   timingNotes={detail.strategy?.timing_notes}
@@ -588,6 +624,23 @@ export default function CampaignDetail() {
             >
               {inFlightCount > 0 ? `Cancel ${inFlightCount} & Complete` : "Mark Completed"}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={revertOpen} onOpenChange={(open) => { if (!open) pendingRevertRef.current = null; setRevertOpen(open); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revert to Draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingRevertRef.current
+                ? `Editing ${pendingRevertRef.current.label} requires moving this campaign back to Draft. Outreach and monitoring will pause until you re-activate.`
+                : "Editing this section requires moving this campaign back to Draft. Outreach and monitoring will pause until you re-activate."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRevertToDraft}>Revert to Draft</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

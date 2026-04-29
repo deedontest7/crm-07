@@ -1,71 +1,46 @@
-## Reply Detection — Root Cause & Fix Plan
+# Auto Activate / Revert-to-Draft Prompt for Setup
 
-### What's actually broken (verified against live data)
+## Goal
+Make the Draft → Active transition feel automatic:
+1. The moment all 4 Setup sections (Region, Audience, Message, Timing) flip to done **while status is Draft**, show an "Activate Campaign?" popup automatically.
+2. If the user later **unmarks** any Setup section while status is `Active`, `Scheduled`, or `Paused`, show a "Revert to Draft?" popup. On confirm, both the section is unmarked **and** status flips to `Draft`. On cancel, the unmark is rolled back so state stays consistent.
+3. After reverting to Draft, when all 4 sections are marked done again, the Activate popup appears again (same flow as step 1).
 
-The reply at **2026-04-28 20:35:59** from `deedontest1@gmail.com` (visible in your screenshot, "29 Apr 02:08") is sitting in `email_reply_skip_log` with `skip_reason = chronology`. It is one of **4 chronology-skipped replies** in the last 24 hours, plus one historical from Apr 24. None of them landed in the conversation reader because the same chain of failures keeps repeating:
+## UX rules
+- Activate popup re-uses the existing `activateOpen` AlertDialog — same copy, same scheduled-start warning. No new dialog component.
+- The popup auto-fires only **once per "all-done" transition** (track the previous all-done state with a ref so it doesn't re-open on every re-render or after the user dismisses it). It fires again only after the campaign drops out of "all done" and re-enters it.
+- Auto-popup is suppressed when: status is `Completed`/`Failed`, the campaign is read-only, or `isCampaignEnded` is true (end date passed).
+- Revert-to-Draft popup is a new small AlertDialog; copy: "Revert to Draft? This will pause outreach and monitoring so you can edit the {section} setup."
+- Toast messages remain ("Region marked as done"); the popup appears immediately after.
 
-1. **Outbound emails ship without working threading headers.** `azure-email.ts` first tries standard `In-Reply-To`/`References` against Microsoft Graph, Graph rejects them with `ErrorInvalidInternetMessageHeader`, then we fall back to **`x-In-Reply-To`/`x-References`**. Gmail and Outlook both **ignore `x-` prefixed headers** for threading. So replies arrive with no usable In-Reply-To pointing at our outbound's `internet_message_id`.
+## Technical changes
 
-2. **`createReply` (the only path that produces *real* RFC 5322 threading) returns 403 ErrorAccessDenied.** When the parent was sent as the shared mailbox `crm@realthingks.com`, the function calls `createReply` against the user mailbox `deepak.dongare@realthingks.com/messages/{id}` — wrong mailbox, message not found, 403. Code attempts a partial mailbox swap but only *after* the first failure and only when explicitly `sentAsShared=true`. Today's parent (`9f1b2562`) was sent with `sender_email = deepak.dongare@realthingks.com` and `sent_as_shared = false`, so the swap logic doesn't even trigger — yet the recipient's reply still has no usable In-Reply-To, proving the standard-header send path is the real culprit.
+### `src/pages/CampaignDetail.tsx`
+- Add a `useEffect` watching `isFullyStrategyComplete` + `currentStatus`. When it transitions `false → true` and status is `Draft` (and not ended/read-only), `setActivateOpen(true)`. Use a `useRef<boolean>` to remember the previous value so we only fire on the edge.
+- Add `revertOpen` state + `pendingRevertSection` ref holding `{ flag, label }` so the dialog knows which section triggered it.
+- Pass a new optional prop `onSectionUnmarkRequiresRevert?: (flag, label) => boolean` to `CampaignStrategy`. If status is non-Draft/non-Completed and the user clicks an already-done circle, the page intercepts: opens revert dialog instead of immediately calling `updateStrategyFlag(flag, false)`.
+- Confirm handler: `await updateStrategyFlag(flag, false)` then `performStatusChange("Draft")`.
+- Cancel handler: do nothing (section stays done).
 
-3. **Outlook rotates `conversationId` on every send** because it never sees a real In-Reply-To from us. The DB shows two outbounds to the same contact with the same subject sent 3 minutes apart, each in a *different* `conversation_id`. The contact's reply lands in conv `...ACrsQoXR...` which only contains the 20:38 outbound — but the reply was received at 20:35:59, *before* 20:38:14 → bucket chronology skips it. The **real parent** (`9f1b2562`, sent 20:35:27) is in a different bucket the reply detector never reaches.
+### `src/components/campaigns/CampaignStrategy.tsx`
+- Accept the new optional callback. In `handleUnmark`, if the callback returns `true` (intercepted), skip the local update — the page handles it.
+- No other behavior changes.
 
-4. **The `Step 1b` rescue path exists but isn't catching today's case.** Tracing the code shows the rescue *should* match `9f1b2562` (within ±10 min, subjects compatible, contact lookup hits). It's silently failing because either (a) Step 1's header IN-query is matching against `bccc7b5e`'s `internet_message_id` due to a header value that survived from an *earlier* thread, or (b) `bucketsByConvId.get(compatible.conversation_id)` returns empty when the rescue points at a conv whose key is filed under a different campaign/contact composite. We'll instrument and harden both branches.
+## Bugs / improvements found during review
 
-5. **Some outbounds have `internet_message_id = NULL`** (e.g. `c06785f5`, `251d9fed` from 19:48 / 19:22). Even if the contact's mail client *did* stamp a proper In-Reply-To, header-anchored lookup can't match a NULL on our side. Cause: `fetchSentMessageMetadata` returns empty when the Sent Items lookup loses the race against the cron, and we persist the row anyway.
+1. **Status guard inconsistency**: `buildMenuOptions` allows "Revert to Draft" only from `Paused`, but the Setup-driven revert flow needs to also work from `Active` and `Scheduled`. Decision: the auto-revert popup bypasses the menu rule (it's an explicit user-confirmed action triggered by editing setup). The menu itself stays unchanged to keep manual reverts conservative.
+2. **Race on rapid toggling**: clicking "mark done" on the 4th section while the previous section's mutation is still pending could fire the popup before the DB flip lands. Mitigation: the popup reads `isFullyStrategyComplete` from the same `detail` snapshot, which already updates after `updateStrategyFlag` resolves, so the edge-detect ref is safe. No extra debounce needed.
+3. **`isCampaignEnded` Draft case**: existing banner already says "End date has passed while still in Draft." Auto-activate popup must be suppressed here so we don't prompt to activate an expired campaign.
+4. **`Completed` campaigns**: `isReadOnly` is already true; popup is suppressed via the same guard.
+5. **Toast spam**: when reverting, we currently emit "Region unmarked" toast plus would emit a "Status changed" toast. Suppress the section unmark toast in the revert path (page already shows the dialog + we can show one combined toast: "Reverted to Draft — edit {section} and re-activate when ready").
+6. **Audience hint suppression edge case** (pre-existing, not part of this task but flagged): in `CampaignStrategy.validateSection`, the audience reachable-on-primary check uses `counts.contactCount` truthiness — if `contactCount` is `0` the message is correctly skipped, but if it's `undefined` (loading) the warning also hides. Acceptable, just noting.
+7. **Mobile dialog overflow**: existing `AlertDialog` content is fine at 1176px; no changes needed.
 
-6. **UI: messages don't collapse on thread switch.** `expandedMessages: Set<string>` in `CampaignCommunications.tsx` is seeded from initial render but never cleared when the user clicks a different thread, leaving stale expansions.
+## Out of scope
+- No changes to status state machine in `campaignStatus.ts` (`allowedTransitions` stays as-is).
+- No DB changes; uses existing `region_done`/`audience_done`/`message_done`/`timing_done` flags and existing status mutation.
+- No changes to send/queue logic.
 
----
-
-### Fix plan
-
-#### A. `supabase/functions/_shared/azure-email.ts` — fix outbound threading at the source
-
-1. **Detect shared-mailbox parent up front.** Before calling `createReply`, compare `parentComm.sender_email` against the authenticated user. If they differ (or `sent_as_shared=true`), call `createReply` against the **parent's mailbox** (`/users/{parentSenderEmail}/messages/{id}/createReply`) on the *first* attempt — eliminates the 403 round-trip.
-2. **Stop sending standard `In-Reply-To`/`References` via `sendMail`.** Graph rejects them; the `x-` retry produces headers no MUA respects. Either:
-   - Path succeeds via `createReply` (which embeds proper RFC 5322 headers Graph generates server-side), or
-   - We **hard-fail** with `errorCode: "REPLY_THREADING_BROKEN"` so the UI surfaces it instead of silently sending an unthreaded message.
-3. **Remove the noisy "Standard threading headers rejected by Graph; retrying with x- prefix" warning** — it's no longer a fallback path.
-
-#### B. `supabase/functions/send-campaign-email/index.ts` — preserve mailbox identity
-
-4. **When sending a reply, route through the parent's mailbox.** If `parentComm.sender_email` differs from the current user's mailbox, set `replyMailbox = parentComm.sender_email` *before* calling `azureSendEmail`. Pairs with fix A1.
-5. **Persist `internet_message_id` reliably.** Extend `fetchSentMessageMetadata` retry budget; if still empty, fall back to a `findSentMessageGraphId` lookup keyed on `conversationId` + `subject` + `recipient` to recover the Internet-Message-Id rather than writing NULL. If recovery still fails, write a placeholder `delivery_status='sent_no_metadata'` so the metadata back-fill cron can retry instead of leaving a permanent NULL.
-
-#### C. `supabase/functions/check-email-replies/index.ts` — make the detector forgiving
-
-6. **Always re-fetch `internetMessageHeaders` per relevant message** when the list endpoint returned an empty array, even when `conversationId` matches a tracked conv. Currently the per-message refetch only runs in the *non-matching* branch (line 432); move/duplicate it into the matching branch so header-anchored lookup always has data to work with.
-7. **Loosen header normalization.** Strip `<>` AND lowercase on both sides before the IN query (we already generate variants, but contact replies sometimes return `In-Reply-To` quoted, with surrounding whitespace, or with `\r\n` folding from forwarded threads).
-8. **Fix the rescue path's bucket lookup.** When Step 1b finds a `compatible` parent via subject+contact+time, **synthesize a bucket** from the recovered parent row instead of relying on `bucketsByConvId.get(...)` (which returns `[]` whenever the parent's conv was rotated or filed under a different composite key). Set `chosenBucketSample` directly from the recovered row.
-9. **Add a "header anchored takes absolute precedence" guard.** Once Step 1 *or* Step 1b sets `headerAnchoredParent`, skip bucket chronology entirely — treat the header-anchored parent as authoritative regardless of `convEmails` membership.
-10. **Loosen the chronology skew to 120 seconds** (currently 60s). Outlook's `receivedDateTime` versus our async `communication_date` insert routinely drifts >60s under load.
-11. **One-shot replay at the end of the run**: query `email_reply_skip_log` rows from the last 24h with `skip_reason='chronology'` whose `parent_communication_id` no longer matches the closest header-or-rescue parent, and re-run them through the matcher. Insert successful matches into `campaign_communications`. Idempotent — already-inserted replies (same `internet_message_id` + contact) are skipped via existing dedupe.
-
-#### D. `src/components/campaigns/CampaignCommunications.tsx` — UI collapse fix
-
-12. **Reset `expandedMessages` on thread switch.** In the `useEffect` that fires when `selectedThreadKey` changes, call `setExpandedMessages(new Set([latestMessageId]))`. Fixes the "old messages stay expanded when I open a different thread" behaviour visible in the uploaded screenshot.
-
----
-
-### Validation steps after deploy
-
-1. Manually invoke `check-email-replies`. Confirm the **4 existing chronology-skipped replies** (Apr 28 19:12, 20:00, 20:23, 20:38) are ingested via the replay step (#11) and appear in the conversation reader.
-2. Send a fresh email from the app, then reply from `deedontest1@gmail.com`. Within one cron tick the reply must show up under the original thread (not a new one) and the contact's mail client must show it threaded under our outbound (not a fresh thread).
-3. Check `email_send_log` shows `success` with non-null `internet_message_id` for new sends.
-4. Check edge logs no longer contain `"Standard threading headers rejected"` warnings or `createReply failed (403)` errors.
-5. Click between two campaign threads in the UI and confirm previously-expanded messages collapse.
-
-### Files touched
-
-| File | Change |
-|------|--------|
-| `supabase/functions/_shared/azure-email.ts` | Mailbox-aware createReply; remove standard-header sendMail fallback; emit `REPLY_THREADING_BROKEN` on hard failure |
-| `supabase/functions/send-campaign-email/index.ts` | Set `replyMailbox` from parent; reliable `internet_message_id` persistence |
-| `supabase/functions/check-email-replies/index.ts` | Always-fetch headers; header-anchored precedence; rescue synthesizes bucket; 120s skew; 24h replay step |
-| `src/components/campaigns/CampaignCommunications.tsx` | Reset `expandedMessages` on `selectedThreadKey` change |
-
-### Out of scope
-
-- Switching from cron to Microsoft Graph webhooks/subscriptions (architectural change — separate effort).
-- Backfilling `internet_message_id` on the 3 historical NULL rows (one-shot SQL job — happy to run separately on request).
+## Files touched
+- `src/pages/CampaignDetail.tsx` — auto-popup effect, revert dialog, intercept callback wiring.
+- `src/components/campaigns/CampaignStrategy.tsx` — accept and call the optional intercept callback in `handleUnmark`.
